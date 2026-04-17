@@ -37,6 +37,10 @@ open STDOUT,">$output";
 $PREFIX="vpaes";
 
 $code.=<<___;
+#include "loongarch_arch.h"
+
+.text
+.extern OPENSSL_loongarch_hwcap_P
 
 ##
 ##  _aes_encrypt_core
@@ -798,6 +802,263 @@ $code.=<<___;
 .cfi_endproc
 .size	${PREFIX}_decrypt,.-${PREFIX}_decrypt
 ___
+{
+my ($inp,$out,$blocks,$key,$ivec)=("$a0","$a1","$a2","$a3","$a4");
+$code.=<<___;
+.globl	${PREFIX}_ctr32_encrypt_blocks
+#.type	${PREFIX}_ctr32_encrypt_blocks,\@function,5
+.align	4
+${PREFIX}_ctr32_encrypt_blocks:
+.cfi_startproc
+    beqz    $blocks,.Lctr32_done
+    addi.d  $sp,$sp,-64
+    st.d    $ra,$sp,56
+    st.d    $fp,$sp,48
+    st.d    $s0,$sp,40
+    st.d    $s1,$sp,32
+    st.d    $s2,$sp,24
+
+    ori     $fp,$blocks,0
+    ori     $s1,$key,0
+    ori     $a2,$s1,0
+    vld     $vr6,$ivec,0
+    ld.w    $s0,$ivec,12
+    revb.2w $s0,$s0
+
+    # Check for LASX capability and at least 2 blocks
+    ori     $t1,$zero,1
+    bleu    $fp,$t1,.Lctr32_lsx_entry
+    la.global $t0,OPENSSL_loongarch_hwcap_P
+    ld.w    $t0,$t0,0
+    andi    $t1,$t0,LOONGARCH_HWCAP_LASX
+    bnez    $t1,.Lctr32_lasx_entry
+
+.align  4
+.Lctr32_lsx_entry:
+    ori     $a2,$s1,0
+    bl      _vpaes_preheat
+
+.align  4
+.Lctr32_loop:
+    vori.b  $vr0,$vr6,0
+    bl      _vpaes_encrypt_core
+    vld     $vr7,$inp,0
+    vxor.v  $vr0,$vr0,$vr7
+    vst     $vr0,$out,0
+
+    addi.d  $inp,$inp,16
+    addi.d  $out,$out,16
+    addi.w  $s0,$s0,1
+    ori     $t0,$s0,0
+    revb.2w $t0,$t0
+    vinsgr2vr.w $vr6,$t0,3
+
+    addi.d  $fp,$fp,-1
+    bnez    $fp,.Lctr32_loop
+    b       .Lctr32_epilogue
+
+.align  4
+.Lctr32_lasx_entry:
+    ori     $a2,$s1,0
+    bl      _vpaes_lasx_preheat
+
+.align  4
+.Lctr32_lasx_loop:
+    # Build two counter blocks: xvr0 = [ctr_N | ctr_N+1]
+    # vr6 has the current counter (big-endian), s0 has the counter value (host-endian)
+    addi.w  $s2,$s0,1
+    ori     $t0,$s2,0
+    revb.2w $t0,$t0
+    vori.b  $vr7,$vr6,0
+    vinsgr2vr.w $vr7,$t0,3           # vr7 = counter N+1
+
+    # Pack into xvr0: low 128 = vr6 (ctr N), high 128 = vr7 (ctr N+1)
+    # xvpermi.q xr0, xr7, imm: a=xr0, b=xr7
+    #   Low  = (imm&2) ? a.q[imm&1] : b.q[imm&1]
+    #   High = (imm&0x20) ? a.q[(imm>>4)&1] : b.q[(imm>>4)&1]
+    # imm=0x02: Low=a.q[0]=xr0.low=ctr_N, High=b.q[0]=xr7.low=ctr_N+1
+    vori.b  $vr0,$vr6,0
+    xvpermi.q \$xr0,\$xr7,0x02
+
+    bl      _vpaes_lasx_encrypt_core
+
+    # XOR with plaintext (load 32 bytes)
+    xvld    \$xr7,$inp,0
+    xvxor.v \$xr0,\$xr0,\$xr7
+    xvst    \$xr0,$out,0
+
+    addi.d  $inp,$inp,32
+    addi.d  $out,$out,32
+    addi.w  $s0,$s0,2
+    ori     $t0,$s0,0
+    revb.2w $t0,$t0
+    vinsgr2vr.w $vr6,$t0,3
+
+    addi.d  $fp,$fp,-2
+    ori     $t0,$zero,1
+    bgtu    $fp,$t0,.Lctr32_lasx_loop
+
+    # Handle remaining odd block via LSX path
+    beqz    $fp,.Lctr32_epilogue
+    ori     $a2,$s1,0
+    bl      _vpaes_preheat
+    b       .Lctr32_loop
+
+.Lctr32_epilogue:
+    ld.d    $ra,$sp,56
+    ld.d    $fp,$sp,48
+    ld.d    $s0,$sp,40
+    ld.d    $s1,$sp,32
+    ld.d    $s2,$sp,24
+    addi.d  $sp,$sp,64
+.Lctr32_done:
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size	${PREFIX}_ctr32_encrypt_blocks,.-${PREFIX}_ctr32_encrypt_blocks
+
+##
+##  LASX (256-bit) encrypt core for 2 blocks simultaneously
+##  Input: xvr0 = [block0 | block1] (two 128-bit AES blocks)
+##  Uses preheated xvr9-xvr15, xvr18 (256-bit duplicated tables)
+##  Key schedule pointer in a5, round count in t5
+##  Clobbers xvr0-xvr5, r9-r11, t0, t5
+##  Output: xvr0 = [encrypted0 | encrypted1]
+##
+.align 4
+_vpaes_lasx_encrypt_core:
+.cfi_startproc
+    move    $a5,$a2
+    li.d    $a7,0x10
+    ld.w    $t5,$a2,240
+
+    # Input transform
+    xvori.b \$xr1,\$xr9,0
+    la.local $t0,Lk_ipt
+    vld     $vr2,$t0,0                   # iptlo (128-bit)
+    xvreplve0.q \$xr2,\$xr2             # duplicate to 256-bit
+    xvandn.v \$xr1,\$xr1,\$xr0          # 1 = i<<4
+    vld     $vr5,$a5,0                   # round0 key (128-bit)
+    xvreplve0.q \$xr5,\$xr5             # duplicate key
+    xvsrli.w \$xr1,\$xr1,4              # 1 = i
+    xvand.v \$xr0,\$xr0,\$xr9           # 0 = k
+    xvshuf.b \$xr2,\$xr18,\$xr2,\$xr0  # 2 = iptlo[k]
+    vld     $vr0,$t0,16                  # ipthi (128-bit)
+    xvreplve0.q \$xr0,\$xr0
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr1  # 0 = ipthi[i]
+    xvxor.v \$xr2,\$xr2,\$xr5
+    addi.d  $a5,$a5,16
+    xvxor.v \$xr0,\$xr0,\$xr2
+    la.local $a6,Lk_mc_backward
+    b       .Llasx_enc_entry
+
+.align 4
+.Llasx_enc_loop:
+    # middle of middle round
+    xvori.b \$xr4,\$xr13,0              # sb1u
+    xvori.b \$xr0,\$xr12,0              # sb1t
+    xvshuf.b \$xr4,\$xr18,\$xr4,\$xr2  # sb1u[io]
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr3  # sb1t[jo]
+    xvxor.v \$xr4,\$xr4,\$xr5           # sb1u + k
+    xvori.b \$xr5,\$xr15,0              # sb2u
+    xvxor.v \$xr0,\$xr0,\$xr4           # 0 = A
+    add.d   $t0,$a7,$a6                  # Lk_mc_forward[]
+    vld     $vr1,$t0,-0x40
+    xvreplve0.q \$xr1,\$xr1             # duplicate mc_forward
+    xvshuf.b \$xr5,\$xr18,\$xr5,\$xr2  # sb2u[io]
+    vld     $vr4,$t0,0
+    xvreplve0.q \$xr4,\$xr4             # duplicate mc_backward
+    xvori.b \$xr2,\$xr14,0              # sb2t
+    xvshuf.b \$xr2,\$xr18,\$xr2,\$xr3  # sb2t[jo]
+    xvori.b \$xr3,\$xr0,0               # 3 = A
+    xvxor.v \$xr2,\$xr5,\$xr2           # 2 = 2A
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr1  # 0 = B
+    addi.d  $a5,$a5,16
+    xvxor.v \$xr0,\$xr0,\$xr2           # 0 = 2A+B
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr4  # 3 = D
+    addi.d  $a7,$a7,16
+    xvxor.v \$xr3,\$xr3,\$xr0           # 3 = 2A+B+D
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr1  # 0 = 2B+C
+    andi    $a7,$a7,0x30
+    addi.d  $t5,$t5,-1
+    xvxor.v \$xr0,\$xr0,\$xr3           # 0 = 2A+3B+C+D
+
+.Llasx_enc_entry:
+    # top of round - SubBytes via GF(2^4) inversion
+    xvori.b \$xr1,\$xr9,0               # s0F mask
+    xvori.b \$xr5,\$xr11,0              # a/k
+    xvandn.v \$xr1,\$xr1,\$xr0          # 1 = i<<4
+    xvsrli.w \$xr1,\$xr1,4              # 1 = i
+    xvand.v \$xr0,\$xr0,\$xr9           # 0 = k
+    xvshuf.b \$xr5,\$xr18,\$xr5,\$xr0  # 2 = a/k
+    xvori.b \$xr3,\$xr10,0              # 1/i
+    xvxor.v \$xr0,\$xr0,\$xr1           # 0 = j
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr1  # 3 = 1/i
+    xvori.b \$xr4,\$xr10,0              # 1/j
+    xvxor.v \$xr3,\$xr3,\$xr5           # 3 = iak
+    xvshuf.b \$xr4,\$xr18,\$xr4,\$xr0  # 4 = 1/j
+    xvori.b \$xr2,\$xr10,0              # 1/iak
+    xvxor.v \$xr4,\$xr4,\$xr5           # 4 = jak
+    xvshuf.b \$xr2,\$xr18,\$xr2,\$xr3  # 2 = 1/iak
+    xvori.b \$xr3,\$xr10,0              # 1/jak
+    xvxor.v \$xr2,\$xr2,\$xr0           # 2 = io
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr4  # 3 = 1/jak
+    vld     $vr5,$a5,0                   # round key (128-bit)
+    xvreplve0.q \$xr5,\$xr5             # duplicate
+    xvxor.v \$xr3,\$xr3,\$xr1           # 3 = jo
+    bnez    $t5,.Llasx_enc_loop
+
+    # Last round
+    la.local $t0,Lk_sbo
+    vld     $vr4,$t0,0                   # sbou
+    xvreplve0.q \$xr4,\$xr4
+    vld     $vr0,$t0,16                  # sbot
+    xvreplve0.q \$xr0,\$xr0
+    xvshuf.b \$xr4,\$xr18,\$xr4,\$xr2  # sbou[io]
+    xvxor.v \$xr4,\$xr4,\$xr5           # + key
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr3  # sbot[jo]
+    add.d   $t0,$a7,$a6                  # Lk_sr[]
+    vld     $vr1,$t0,0x40
+    xvreplve0.q \$xr1,\$xr1
+    xvxor.v \$xr0,\$xr0,\$xr4           # 0 = A
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr1  # ShiftRows
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size	_vpaes_lasx_encrypt_core,.-_vpaes_lasx_encrypt_core
+
+##
+##  LASX preheat: load 256-bit (duplicated) tables into xvr9-xvr15, xvr18
+##
+.align 4
+_vpaes_lasx_preheat:
+.cfi_startproc
+    la.local $a6,Lk_s0F
+    vld     $vr10,$a6,-0x20              # Lk_inv
+    xvreplve0.q \$xr10,\$xr10
+    vld     $vr11,$a6,-0x10              # Lk_inv+16
+    xvreplve0.q \$xr11,\$xr11
+    vld     $vr9,$a6,0                   # Lk_s0F
+    xvreplve0.q \$xr9,\$xr9
+    vld     $vr13,$a6,0x30               # Lk_sb1
+    xvreplve0.q \$xr13,\$xr13
+    vld     $vr12,$a6,0x40               # Lk_sb1+16
+    xvreplve0.q \$xr12,\$xr12
+    vld     $vr15,$a6,0x50               # Lk_sb2
+    xvreplve0.q \$xr15,\$xr15
+    vld     $vr14,$a6,0x60               # Lk_sb2+16
+    xvreplve0.q \$xr14,\$xr14
+    xvldi   \$xr18,0                     # zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size	_vpaes_lasx_preheat,.-_vpaes_lasx_preheat
+
+########################################################
+##                                                    ##
+##                  AES key schedule                  ##
+##                                                    ##
+##                                                    ##
+___
+}
+
 {
 my ($inp,$out,$len,$key,$ivp,$enc)=("$a0","$a1","$a2","$a3","$a4","$a5");
 # void AES_cbc_encrypt (const void char *inp, unsigned char *out,

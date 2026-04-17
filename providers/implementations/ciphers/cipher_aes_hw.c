@@ -103,6 +103,8 @@ static int cipher_hw_aes_initkey(PROV_CIPHER_CTX *dat,
         dat->stream.cbc = (dat->mode == EVP_CIPH_CBC_MODE)
             ? (cbc128_f)vpaes_cbc_encrypt
             : NULL;
+        if (dat->mode == EVP_CIPH_CTR_MODE)
+            dat->stream.ctr = (ctr128_f)vpaes_ctr32_encrypt_blocks;
     } else
 #endif
     {

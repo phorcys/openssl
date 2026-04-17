@@ -35,6 +35,9 @@
 #elif defined(__riscv)
 #include "crypto/riscv_arch.h"
 #define CPU_INFO_STR_LEN 2048
+#elif defined(__loongarch_lp64)
+#include "loongarch_arch.h"
+#define CPU_INFO_STR_LEN 128
 #else
 #define CPU_INFO_STR_LEN 256
 #endif
@@ -182,6 +185,15 @@ DEFINE_RUN_ONCE_STATIC(init_info_strings)
             sizeof(ossl_cpu_info_str) - strlen(ossl_cpu_info_str),
             " vlen:%lu", riscv_vlen());
     if ((env = getenv("OPENSSL_riscvcap")) != NULL)
+        BIO_snprintf(ossl_cpu_info_str + strlen(ossl_cpu_info_str),
+            sizeof(ossl_cpu_info_str) - strlen(ossl_cpu_info_str),
+            " env:%s", env);
+#elif defined(__loongarch_lp64)
+    const char *env;
+
+    BIO_snprintf(ossl_cpu_info_str, sizeof(ossl_cpu_info_str),
+        CPUINFO_PREFIX "OPENSSL_loongarchcap=0x%x", OPENSSL_loongarch_hwcap_P);
+    if ((env = getenv("OPENSSL_loongarchcap")) != NULL)
         BIO_snprintf(ossl_cpu_info_str + strlen(ossl_cpu_info_str),
             sizeof(ossl_cpu_info_str) - strlen(ossl_cpu_info_str),
             " env:%s", env);

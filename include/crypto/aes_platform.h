@@ -22,6 +22,10 @@ void vpaes_encrypt(const unsigned char *in, unsigned char *out,
     const AES_KEY *key);
 void vpaes_decrypt(const unsigned char *in, unsigned char *out,
     const AES_KEY *key);
+void vpaes_ctr32_encrypt_blocks(const unsigned char *in,
+    unsigned char *out, size_t blocks,
+    const AES_KEY *key,
+    const unsigned char ivec[16]);
 void vpaes_cbc_encrypt(const unsigned char *in,
     unsigned char *out,
     size_t length,

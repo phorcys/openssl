@@ -7,11 +7,19 @@
  * https://www.openssl.org/source/license.html
  */
 #include <sys/auxv.h>
+#include <stdlib.h>
 #include "loongarch_arch.h"
 
 unsigned int OPENSSL_loongarch_hwcap_P = 0;
 
 void OPENSSL_cpuid_setup(void)
 {
+    const char *env = getenv("OPENSSL_loongarchcap");
+
+    if (env != NULL) {
+        OPENSSL_loongarch_hwcap_P = (unsigned int)strtoul(env, NULL, 0);
+        return;
+    }
+
     OPENSSL_loongarch_hwcap_P = getauxval(AT_HWCAP);
 }
