@@ -26,7 +26,8 @@
 ($a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7)=map("\$r$_",(4..11));
 ($t0,$t1,$t2,$t3,$t4,$t5,$t6,$t7,$t8,$t9)=map("\$r$_",(12..21));
 ($s0,$s1,$s2,$s3,$s4,$s5,$s6,$s7)=map("\$r$_",(23..30));
-($vr0,$vr1,$vr2,$vr3,$vr4,$vr5,$vr6,$vr7,$vr8,$vr9,$vr10,$vr11,$vr12,$vr13,$vr14,$vr15,$vr16,$vr17,$vr18,$vr19)=map("\$vr$_",(0..19));
+($vr0,$vr1,$vr2,$vr3,$vr4,$vr5,$vr6,$vr7,$vr8,$vr9,$vr10,$vr11,$vr12,$vr13,$vr14,$vr15,
+ $vr16,$vr17,$vr18,$vr19,$vr20,$vr21,$vr22,$vr23,$vr24,$vr25,$vr26,$vr27,$vr28,$vr29,$vr30,$vr31)=map("\$vr$_",(0..31));
 ($fp)=map("\$r$_",(22));
 
 # $output is the last argument if it looks like a file (it has an extension)
@@ -840,6 +841,38 @@ ${PREFIX}_ctr32_encrypt_blocks:
 
 .align  4
 .Lctr32_loop:
+    beqz    $fp,.Lctr32_epilogue
+    ori     $t1,$zero,1
+    beq     $fp,$t1,.Lctr32_single
+
+.align  4
+.Lctr32_pair:
+    addi.w  $s2,$s0,1
+    ori     $t0,$s2,0
+    revb.2w $t0,$t0
+    vori.b  $vr19,$vr6,0
+    vinsgr2vr.w $vr19,$t0,3
+    vori.b  $vr0,$vr6,0
+    bl      _vpaes_lsx2_encrypt_core
+    vld     $vr7,$inp,0
+    vld     $vr8,$inp,16
+    vxor.v  $vr0,$vr0,$vr7
+    vxor.v  $vr19,$vr19,$vr8
+    vst     $vr0,$out,0
+    vst     $vr19,$out,16
+
+    addi.d  $inp,$inp,32
+    addi.d  $out,$out,32
+    addi.w  $s0,$s0,2
+    ori     $t0,$s0,0
+    revb.2w $t0,$t0
+    vinsgr2vr.w $vr6,$t0,3
+
+    addi.d  $fp,$fp,-2
+    b       .Lctr32_loop
+
+.align  4
+.Lctr32_single:
     vori.b  $vr0,$vr6,0
     bl      _vpaes_encrypt_core
     vld     $vr7,$inp,0
@@ -864,6 +897,60 @@ ${PREFIX}_ctr32_encrypt_blocks:
 
 .align  4
 .Lctr32_lasx_loop:
+    beqz    $fp,.Lctr32_epilogue
+    ori     $t2,$zero,3
+    bleu    $fp,$t2,.Lctr32_lasx_tail
+
+    # Build stream A: xvr0 = [ctr_N | ctr_N+1]
+    addi.w  $s2,$s0,1
+    ori     $t0,$s2,0
+    revb.2w $t0,$t0
+    vori.b  $vr7,$vr6,0
+    vinsgr2vr.w $vr7,$t0,3
+    vori.b  $vr0,$vr6,0
+    xvpermi.q \$xr0,\$xr7,0x02
+
+    # Build stream B: xvr16 = [ctr_N+2 | ctr_N+3]
+    addi.w  $t1,$s0,2
+    ori     $t0,$t1,0
+    revb.2w $t0,$t0
+    vori.b  $vr8,$vr6,0
+    vinsgr2vr.w $vr8,$t0,3
+
+    addi.w  $t1,$s0,3
+    ori     $t0,$t1,0
+    revb.2w $t0,$t0
+    vori.b  $vr17,$vr6,0
+    vinsgr2vr.w $vr17,$t0,3
+    vori.b  $vr16,$vr8,0
+    xvpermi.q \$xr16,\$xr17,0x02
+
+    bl      _vpaes_lasx4_encrypt_core
+
+    xvld    \$xr7,$inp,0
+    xvld    \$xr8,$inp,32
+    xvxor.v \$xr0,\$xr0,\$xr7
+    xvxor.v \$xr16,\$xr16,\$xr8
+    xvst    \$xr0,$out,0
+    xvst    \$xr16,$out,32
+
+    addi.d  $inp,$inp,64
+    addi.d  $out,$out,64
+    addi.w  $s0,$s0,4
+    ori     $t0,$s0,0
+    revb.2w $t0,$t0
+    vinsgr2vr.w $vr6,$t0,3
+
+    addi.d  $fp,$fp,-4
+    b       .Lctr32_lasx_loop
+
+.align  4
+.Lctr32_lasx_tail:
+    ori     $t2,$zero,1
+    beq     $fp,$t2,.Lctr32_lasx_single
+
+.align  4
+.Lctr32_lasx_pair:
     # Build two counter blocks: xvr0 = [ctr_N | ctr_N+1]
     # vr6 has the current counter (big-endian), s0 has the counter value (host-endian)
     addi.w  $s2,$s0,1
@@ -895,11 +982,10 @@ ${PREFIX}_ctr32_encrypt_blocks:
     vinsgr2vr.w $vr6,$t0,3
 
     addi.d  $fp,$fp,-2
-    ori     $t0,$zero,1
-    bgtu    $fp,$t0,.Lctr32_lasx_loop
-
-    # Handle remaining odd block via LSX path
     beqz    $fp,.Lctr32_epilogue
+
+.align  4
+.Lctr32_lasx_single:
     ori     $a2,$s1,0
     bl      _vpaes_preheat
     b       .Lctr32_loop
@@ -915,6 +1001,308 @@ ${PREFIX}_ctr32_encrypt_blocks:
     jirl    $zero,$ra,0
 .cfi_endproc
 .size	${PREFIX}_ctr32_encrypt_blocks,.-${PREFIX}_ctr32_encrypt_blocks
+
+##
+##  LSX paired encrypt core for 2 blocks simultaneously
+##  Input:  vr0  = block0
+##          vr19 = block1
+##  Output: vr0  = enc0
+##          vr19 = enc1
+##
+.align 4
+_vpaes_lsx2_encrypt_core:
+.cfi_startproc
+    move      $a5,$a2
+    li.d      $a7,0x10
+    ld.w      $t5,$a2,240
+
+    la.local  $t0,Lk_ipt
+    vld       $vr25,$t0,0
+    vld       $vr26,$t0,16
+    vld       $vr5,$a5,0
+
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr25,$vr0
+    vshuf.b   $vr21,$vr18,$vr25,$vr19
+    vshuf.b   $vr0,$vr18,$vr26,$vr1
+    vshuf.b   $vr19,$vr18,$vr26,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    addi.d    $a5,$a5,16
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    la.local  $a6,Lk_mc_backward
+    b         .Lenc2_entry
+
+.align 4
+.Lenc2_loop:
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    add.d     $t0,$a7,$a6
+    vld       $vr1,$t0,-0x40
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$t0,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    addi.d    $a5,$a5,16
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    addi.d    $a7,$a7,16
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    andi      $a7,$a7,0x30
+    addi.d    $t5,$t5,-1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+
+.align 4
+.Lenc2_entry:
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vld       $vr5,$a5,0
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    bnez      $t5,.Lenc2_loop
+
+    la.local  $t0,Lk_sbo
+    vld       $vr25,$t0,0
+    vld       $vr26,$t0,16
+    vshuf.b   $vr4,$vr18,$vr25,$vr2
+    vshuf.b   $vr23,$vr18,$vr25,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr26,$vr3
+    vshuf.b   $vr19,$vr18,$vr26,$vr22
+    add.d     $t0,$a7,$a6
+    vld       $vr1,$t0,0x40
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    jr        $ra
+.cfi_endproc
+.size	_vpaes_lsx2_encrypt_core,.-_vpaes_lsx2_encrypt_core
+
+##
+##  LASX paired encrypt core for 4 blocks simultaneously
+##  Input:  xvr0  = [block0 | block1]
+##          xvr16 = [block2 | block3]
+##  Output: xvr0  = [enc0   | enc1]
+##          xvr16 = [enc2   | enc3]
+##
+.align 4
+_vpaes_lasx4_encrypt_core:
+.cfi_startproc
+    move    $a5,$a2
+    li.d    $a7,0x10
+    ld.w    $t5,$a2,240
+
+    la.local $t0,Lk_ipt
+    vld     \$vr24,$t0,0
+    xvreplve0.q \$xr24,\$xr24
+    vld     \$vr25,$t0,16
+    xvreplve0.q \$xr25,\$xr25
+    vld     $vr8,$a5,0
+    xvreplve0.q \$xr8,\$xr8
+
+    xvori.b \$xr1,\$xr9,0
+    xvori.b \$xr19,\$xr9,0
+    xvandn.v \$xr1,\$xr1,\$xr0
+    xvandn.v \$xr19,\$xr19,\$xr16
+    xvsrli.w \$xr1,\$xr1,4
+    xvsrli.w \$xr19,\$xr19,4
+    xvand.v \$xr0,\$xr0,\$xr9
+    xvand.v \$xr16,\$xr16,\$xr9
+    xvshuf.b \$xr2,\$xr18,\$xr24,\$xr0
+    xvshuf.b \$xr20,\$xr18,\$xr24,\$xr16
+    xvshuf.b \$xr0,\$xr18,\$xr25,\$xr1
+    xvshuf.b \$xr16,\$xr18,\$xr25,\$xr19
+    xvxor.v \$xr2,\$xr2,\$xr8
+    xvxor.v \$xr20,\$xr20,\$xr8
+    addi.d  $a5,$a5,16
+    xvxor.v \$xr0,\$xr0,\$xr2
+    xvxor.v \$xr16,\$xr16,\$xr20
+    la.local $a6,Lk_mc_backward
+    b       .Llasx4_enc_entry
+
+.align 4
+.Llasx4_enc_loop:
+    xvori.b \$xr4,\$xr13,0
+    xvori.b \$xr22,\$xr13,0
+    xvori.b \$xr0,\$xr12,0
+    xvori.b \$xr16,\$xr12,0
+    xvshuf.b \$xr4,\$xr18,\$xr4,\$xr2
+    xvshuf.b \$xr22,\$xr18,\$xr22,\$xr20
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr3
+    xvshuf.b \$xr16,\$xr18,\$xr16,\$xr21
+    xvxor.v \$xr4,\$xr4,\$xr8
+    xvxor.v \$xr22,\$xr22,\$xr8
+    xvori.b \$xr5,\$xr15,0
+    xvori.b \$xr23,\$xr15,0
+    xvxor.v \$xr0,\$xr0,\$xr4
+    xvxor.v \$xr16,\$xr16,\$xr22
+    add.d   $t0,$a7,$a6
+    vld     \$vr24,$t0,-0x40
+    xvreplve0.q \$xr24,\$xr24
+    vld     \$vr25,$t0,0
+    xvreplve0.q \$xr25,\$xr25
+    xvshuf.b \$xr5,\$xr18,\$xr5,\$xr2
+    xvshuf.b \$xr23,\$xr18,\$xr23,\$xr20
+    xvori.b \$xr2,\$xr14,0
+    xvori.b \$xr20,\$xr14,0
+    xvshuf.b \$xr2,\$xr18,\$xr2,\$xr3
+    xvshuf.b \$xr20,\$xr18,\$xr20,\$xr21
+    xvori.b \$xr3,\$xr0,0
+    xvori.b \$xr21,\$xr16,0
+    xvxor.v \$xr2,\$xr5,\$xr2
+    xvxor.v \$xr20,\$xr23,\$xr20
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr24
+    xvshuf.b \$xr16,\$xr18,\$xr16,\$xr24
+    addi.d  $a5,$a5,16
+    xvxor.v \$xr0,\$xr0,\$xr2
+    xvxor.v \$xr16,\$xr16,\$xr20
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr25
+    xvshuf.b \$xr21,\$xr18,\$xr21,\$xr25
+    addi.d  $a7,$a7,16
+    xvxor.v \$xr3,\$xr3,\$xr0
+    xvxor.v \$xr21,\$xr21,\$xr16
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr24
+    xvshuf.b \$xr16,\$xr18,\$xr16,\$xr24
+    andi    $a7,$a7,0x30
+    addi.d  $t5,$t5,-1
+    xvxor.v \$xr0,\$xr0,\$xr3
+    xvxor.v \$xr16,\$xr16,\$xr21
+
+.Llasx4_enc_entry:
+    xvori.b \$xr1,\$xr9,0
+    xvori.b \$xr19,\$xr9,0
+    xvori.b \$xr5,\$xr11,0
+    xvori.b \$xr23,\$xr11,0
+    xvandn.v \$xr1,\$xr1,\$xr0
+    xvandn.v \$xr19,\$xr19,\$xr16
+    xvsrli.w \$xr1,\$xr1,4
+    xvsrli.w \$xr19,\$xr19,4
+    xvand.v \$xr0,\$xr0,\$xr9
+    xvand.v \$xr16,\$xr16,\$xr9
+    xvshuf.b \$xr5,\$xr18,\$xr5,\$xr0
+    xvshuf.b \$xr23,\$xr18,\$xr23,\$xr16
+    xvori.b \$xr3,\$xr10,0
+    xvori.b \$xr21,\$xr10,0
+    xvxor.v \$xr0,\$xr0,\$xr1
+    xvxor.v \$xr16,\$xr16,\$xr19
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr1
+    xvshuf.b \$xr21,\$xr18,\$xr21,\$xr19
+    xvori.b \$xr4,\$xr10,0
+    xvori.b \$xr22,\$xr10,0
+    xvxor.v \$xr3,\$xr3,\$xr5
+    xvxor.v \$xr21,\$xr21,\$xr23
+    xvshuf.b \$xr4,\$xr18,\$xr4,\$xr0
+    xvshuf.b \$xr22,\$xr18,\$xr22,\$xr16
+    xvori.b \$xr2,\$xr10,0
+    xvori.b \$xr20,\$xr10,0
+    xvxor.v \$xr4,\$xr4,\$xr5
+    xvxor.v \$xr22,\$xr22,\$xr23
+    xvshuf.b \$xr2,\$xr18,\$xr2,\$xr3
+    xvshuf.b \$xr20,\$xr18,\$xr20,\$xr21
+    xvori.b \$xr3,\$xr10,0
+    xvori.b \$xr21,\$xr10,0
+    xvxor.v \$xr2,\$xr2,\$xr0
+    xvxor.v \$xr20,\$xr20,\$xr16
+    xvshuf.b \$xr3,\$xr18,\$xr3,\$xr4
+    xvshuf.b \$xr21,\$xr18,\$xr21,\$xr22
+    vld     $vr8,$a5,0
+    xvreplve0.q \$xr8,\$xr8
+    xvxor.v \$xr3,\$xr3,\$xr1
+    xvxor.v \$xr21,\$xr21,\$xr19
+    bnez    $t5,.Llasx4_enc_loop
+
+    la.local $t0,Lk_sbo
+    vld     \$vr24,$t0,0
+    vld     \$vr25,$t0,16
+    xvreplve0.q \$xr24,\$xr24
+    xvreplve0.q \$xr25,\$xr25
+    xvshuf.b \$xr4,\$xr18,\$xr24,\$xr2
+    xvshuf.b \$xr22,\$xr18,\$xr24,\$xr20
+    xvxor.v \$xr4,\$xr4,\$xr8
+    xvxor.v \$xr22,\$xr22,\$xr8
+    xvshuf.b \$xr0,\$xr18,\$xr25,\$xr3
+    xvshuf.b \$xr16,\$xr18,\$xr25,\$xr21
+    add.d   $t0,$a7,$a6
+    vld     \$vr24,$t0,0x40
+    xvreplve0.q \$xr24,\$xr24
+    xvxor.v \$xr0,\$xr0,\$xr4
+    xvxor.v \$xr16,\$xr16,\$xr22
+    xvshuf.b \$xr0,\$xr18,\$xr0,\$xr24
+    xvshuf.b \$xr16,\$xr18,\$xr16,\$xr24
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size	_vpaes_lasx4_encrypt_core,.-_vpaes_lasx4_encrypt_core
 
 ##
 ##  LASX (256-bit) encrypt core for 2 blocks simultaneously
