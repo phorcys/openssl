@@ -20,9 +20,15 @@ my $output;
 $output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
 open STDOUT, ">$output";
 
-sub emit_lines {
-    my ($line, $count) = @_;
-    return join('', map { "    $line\n" } 1 .. $count);
+# emit_rept: generate a .rept block for repeated macro invocations.
+sub emit_rept {
+    my ($body, $count, $comment) = @_;
+    my $out = "";
+    $out .= "    # $comment\n" if $comment;
+    $out .= "    .rept $count\n";
+    $out .= "    $body\n";
+    $out .= "    .endr\n";
+    return $out;
 }
 
 my $code = <<'___';
@@ -233,6 +239,11 @@ my $code = <<'___';
 ##
 ## void gcm_gmult_4bit(u64 Xi[2], const u128 Htable[16])
 ##
+## Single-block multiply using 4-bit nibble table lookup.
+## Unlike gcm_ghash_4bit which uses the faster 528B byte-step approach,
+## gmult retains the simpler nibble method because it is called only for
+## AAD finalization and GCM tag computation (very low frequency), so the
+## overhead of precomputing 528B auxiliary tables is not justified.
 .globl gcm_gmult_4bit
 .type gcm_gmult_4bit,@function
 .align 4
@@ -570,8 +581,12 @@ gcm_ghash_4bit:
     GHASH528_INIT2
 ___
 
-$code .= emit_lines("GHASH528_PRE2\n    GHASH528_POST2_LO", 7);
-$code .= emit_lines("GHASH528_PRE2\n    GHASH528_POST2_HI", 8);
+# Low 8 bytes: byte0 handled by INIT, bytes 1-7 remain = 7 iterations
+$code .= emit_rept("GHASH528_PRE2\n    GHASH528_POST2_LO", 7,
+    "src_lo bytes 1-7 (byte 0 consumed by INIT)");
+# High 8 bytes: bytes 0-7 = 8 iterations
+$code .= emit_rept("GHASH528_PRE2\n    GHASH528_POST2_HI", 8,
+    "src_hi bytes 0-7");
 
 $code .= <<'___';
     GHASH528_FINAL2
@@ -597,8 +612,12 @@ $code .= <<'___';
     GHASH528_INIT1 $s3
 ___
 
-$code .= emit_lines("GHASH528_PRE1 \$s4, \$s5\n    GHASH528_POST1 \$s3, \$r7", 7);
-$code .= emit_lines("GHASH528_PRE1 \$s4, \$s5\n    GHASH528_POST1 \$s3, \$r6", 8);
+# Low 8 bytes: byte0 handled by INIT, bytes 1-7 remain = 7 iterations
+$code .= emit_rept("GHASH528_PRE1 \$s4, \$s5\n    GHASH528_POST1 \$s3, \$r7", 7,
+    "src_lo bytes 1-7 (byte 0 consumed by INIT)");
+# High 8 bytes: bytes 0-7 = 8 iterations
+$code .= emit_rept("GHASH528_PRE1 \$s4, \$s5\n    GHASH528_POST1 \$s3, \$r6", 8,
+    "src_hi bytes 0-7");
 
 $code .= <<'___';
     GHASH528_FINAL1 $s3

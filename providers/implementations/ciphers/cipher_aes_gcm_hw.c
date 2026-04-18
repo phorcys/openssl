@@ -147,6 +147,8 @@ static const PROV_GCM_HW aes_gcm = {
 #include "cipher_aes_gcm_hw_rv64i.inc"
 #elif defined(OPENSSL_CPUID_OBJ) && defined(__riscv) && __riscv_xlen == 32
 #include "cipher_aes_gcm_hw_rv32i.inc"
+#elif defined(OPENSSL_CPUID_OBJ) && defined(__loongarch__) && defined(VPAES_CAPABLE)
+#include "cipher_aes_gcm_hw_loongarch64.inc"
 #else
 const PROV_GCM_HW *ossl_prov_aes_hw_gcm(size_t keybits)
 {
