@@ -124,15 +124,6 @@ static int generic_aes_gcm_cipher_update(PROV_GCM_CTX *ctx, const unsigned char 
     return 1;
 }
 
-static const PROV_GCM_HW aes_gcm = {
-    aes_gcm_initkey,
-    ossl_gcm_setiv,
-    ossl_gcm_aad_update,
-    generic_aes_gcm_cipher_update,
-    ossl_gcm_cipher_final,
-    ossl_gcm_one_shot
-};
-
 #if defined(S390X_aes_128_CAPABLE)
 #include "cipher_aes_gcm_hw_s390x.inc"
 #elif defined(AESNI_CAPABLE)
@@ -150,6 +141,15 @@ static const PROV_GCM_HW aes_gcm = {
 #elif defined(OPENSSL_CPUID_OBJ) && defined(__loongarch__) && defined(VPAES_CAPABLE)
 #include "cipher_aes_gcm_hw_loongarch64.inc"
 #else
+static const PROV_GCM_HW aes_gcm = {
+    aes_gcm_initkey,
+    ossl_gcm_setiv,
+    ossl_gcm_aad_update,
+    generic_aes_gcm_cipher_update,
+    ossl_gcm_cipher_final,
+    ossl_gcm_one_shot
+};
+
 const PROV_GCM_HW *ossl_prov_aes_hw_gcm(size_t keybits)
 {
     return &aes_gcm;

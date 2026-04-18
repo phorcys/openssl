@@ -8,11 +8,11 @@
  */
 
 /*
- * LoongArch64 VPAES support for AES GCM.
+ * LoongArch64 AES GCM provider hook.
  * This file is included by cipher_aes_gcm_hw.c
  *
- * Uses VPAES (vector permutation AES) for AES operations and the
- * LoongArch64 optimized GHASH for authentication.
+ * Route AES operations through the VPAES CTR path when LSX is available,
+ * while leaving GHASH selection to the normal gcm128 dispatch.
  */
 
 static int loongarch64_aes_gcm_initkey(PROV_GCM_CTX *ctx, const unsigned char *key,
@@ -21,9 +21,13 @@ static int loongarch64_aes_gcm_initkey(PROV_GCM_CTX *ctx, const unsigned char *k
     PROV_AES_GCM_CTX *actx = (PROV_AES_GCM_CTX *)ctx;
     AES_KEY *ks = &actx->ks.ks;
 
-    GCM_HW_SET_KEY_CTR_FN(ks, vpaes_set_encrypt_key, vpaes_encrypt,
-                          vpaes_ctr32_encrypt_blocks);
-    return 1;
+    if (VPAES_CAPABLE) {
+        GCM_HW_SET_KEY_CTR_FN(ks, vpaes_set_encrypt_key, vpaes_encrypt,
+                              vpaes_ctr32_encrypt_blocks);
+        return 1;
+    }
+
+    return aes_gcm_initkey(ctx, key, keylen);
 }
 
 static const PROV_GCM_HW loongarch64_aes_gcm = {
@@ -37,5 +41,6 @@ static const PROV_GCM_HW loongarch64_aes_gcm = {
 
 const PROV_GCM_HW *ossl_prov_aes_hw_gcm(size_t keybits)
 {
+    (void)keybits;
     return &loongarch64_aes_gcm;
 }

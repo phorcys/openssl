@@ -31,6 +31,36 @@ sub emit_rept {
     return $out;
 }
 
+sub emit_528_prep {
+    my ($tab, $shr, $shl, $loop_label, $comment) = @_;
+    my $out = "";
+    $out .= "    # $comment\n" if $comment;
+    $out .= <<"___";
+    ori     \$r14,$tab,0
+    ori     \$r15,$shr,0
+    ori     \$r16,$shl,0
+    li.d    \$r20,16
+$loop_label:
+    ld.d    \$r17,\$r14,0
+    ld.d    \$r18,\$r14,8
+    andi    \$r19,\$r18,0x0f
+    slli.d  \$r19,\$r19,4
+    st.b    \$r19,\$r16,0
+    slli.d  \$r21,\$r17,60
+    srli.d  \$r18,\$r18,4
+    or      \$r18,\$r18,\$r21
+    srli.d  \$r17,\$r17,4
+    st.d    \$r17,\$r15,0
+    st.d    \$r18,\$r15,8
+    addi.d  \$r14,\$r14,16
+    addi.d  \$r15,\$r15,16
+    addi.d  \$r16,\$r16,1
+    addi.d  \$r20,\$r20,-1
+    bnez    \$r20,$loop_label
+___
+    return $out;
+}
+
 my $code = <<'___';
 .text
 
@@ -240,10 +270,9 @@ my $code = <<'___';
 ## void gcm_gmult_4bit(u64 Xi[2], const u128 Htable[16])
 ##
 ## Single-block multiply using 4-bit nibble table lookup.
-## Unlike gcm_ghash_4bit which uses the faster 528B byte-step approach,
-## gmult retains the simpler nibble method because it is called only for
-## AAD finalization and GCM tag computation (very low frequency), so the
-## overhead of precomputing 528B auxiliary tables is not justified.
+## Unlike gcm_ghash_4bit which uses the faster 528B byte-step approach for
+## long streams, gmult retains the simpler nibble method for this low-frequency
+## single-block path so each call avoids 528B helper precomputation overhead.
 .globl gcm_gmult_4bit
 .type gcm_gmult_4bit,@function
 .align 4
@@ -404,28 +433,10 @@ gcm_ghash_4bit:
     addi.d  $s7,$sp,528         # H^2 shl4 bytes
     addi.d  $s8,$sp,544         # H^2 shr4 table
 
-    # Build H 528B helpers.
-    ori     $r14,$s3,0
-    ori     $r15,$s5,0
-    ori     $r16,$s4,0
-    li.d    $r20,16
-.Lprep_h_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lprep_h_528
+___
+$code .= emit_528_prep('$s3', '$s5', '$s4', '.Lprep_h_528',
+    'Build H 528B helpers.');
+$code .= <<'___';
 
     # Compute raw H^2 into sp+800, then build its 4-bit table at s6.
     # gcm_gmult_4bit expects Xi in the byte-reversed form relative to ctx->H.u,
@@ -440,6 +451,9 @@ gcm_ghash_4bit:
     ori     $r5,$s3,0
     bl      gcm_gmult_4bit
 
+    # Expand raw H^2 into the 16-entry 4-bit table:
+    #   0, 8, 4, 2, 1 come from repeated reduction, then the remaining entries
+    #   are formed by xor-combining those basis elements.
     st.d    $r0,$s6,0
     st.d    $r0,$s6,8
     ld.d    $r12,$sp,800
@@ -532,28 +546,10 @@ gcm_ghash_4bit:
     st.d    $r16,$s6,240
     st.d    $r17,$s6,248
 
-    # Build H^2 528B helpers.
-    ori     $r14,$s6,0
-    ori     $r15,$s8,0
-    ori     $r16,$s7,0
-    li.d    $r20,16
-.Lprep_h2_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lprep_h2_528
+___
+$code .= emit_528_prep('$s6', '$s8', '$s7', '.Lprep_h2_528',
+    'Build H^2 528B helpers.');
+$code .= <<'___';
 
     # Current Xi in big-endian memory order lives in r4:r5.
     ld.d    $r4,$fp,0
