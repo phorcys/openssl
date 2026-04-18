@@ -1,0 +1,1713 @@
+#! /usr/bin/env perl
+# Copyright 2026 The OpenSSL Project Authors. All Rights Reserved.
+#
+# Licensed under the Apache License 2.0 (the "License").  You may not use
+# this file except in compliance with the License.  You can obtain a copy
+# in the file LICENSE in the source distribution or at
+# https://www.openssl.org/source/license.html
+
+# LoongArch64 fused AES-GCM
+#
+# First target:
+#   - encrypt only
+#   - LSX x2 AES + GHASH x2
+#   - process aligned 32-byte chunks
+#   - leave tail handling to generic CRYPTO_gcm128_encrypt_ctr32()
+#
+# This file is intentionally independent from vpaes-loongarch64.pl.
+# The fused AES/GHASH schedule has different register ownership and
+# different optimization goals from generic VPAES CTR code.
+#
+# Interface target:
+#   size_t loongarch64_vpaes_gcm_encrypt(const unsigned char *in,
+#       unsigned char *out, size_t len, const void *key,
+#       unsigned char ivec[16], u64 *Xi);
+#
+# Notes on context recovery:
+#   - Xi points to GCM128_CONTEXT::Xi.u
+#   - Htable is reachable as Xi + 32 bytes
+#   - the relative layout is fixed by include/crypto/modes.h
+#
+# Planned fused register ownership
+# --------------------------------
+# GPR
+#   a0  inp
+#   a1  out
+#   a2  len
+#   a3  key
+#   a4  ivec
+#   a5  Xi
+#
+#   s0  aligned_len
+#   s1  round-key base
+#   s2  rem_8bit table
+#   s3  H 4-bit table
+#   s4  H shl4 bytes
+#   s5  H shr4 table
+#   s6  H^2 4-bit table
+#   s7  H^2 shl4 bytes
+#   s8  H^2 shr4 table
+#
+#   t0/t1/t2/t3/t4/t5/t6/t7/t8/t9
+#       reserved for AES/GHASH common temporaries and loop control
+#
+# GHASH x2 fixed GPR layout
+#   stream A:
+#     r6/r7   src_hi/src_lo
+#     r8/r9   z_hi/z_lo
+#     r10     cur
+#   stream B:
+#     r11/r12 src_hi/src_lo
+#     r13/r14 z_hi/z_lo
+#     r15     cur
+#   temps:
+#     r16/r17/r18  stream A
+#     r19/r20/r21  stream B
+#   common:
+#     r4/r5
+#
+# VPR
+#   vr9..vr15, vr18
+#       VPAES preheat constants
+#   vr0 / vr19
+#       AES states for block pair
+#   vr1/vr20, vr2/vr21, vr3/vr22, vr4/vr23, vr5/vr24
+#       AES x2 round temporaries
+#   vr6/vr7/vr8
+#       wrapper staging for plaintext/ciphertext/counter template
+#   vr25/vr26
+#       AES input/final transform temporaries
+#
+# Planned steady-state schedule
+# -----------------------------
+# The fusion layer must preserve the natural grain of the existing x2 routes:
+#
+#   VPAES LSX x2 natural blocks:
+#     - init
+#     - entry
+#     - loop front
+#     - loop back
+#     - final
+#
+#   GHASH x2 natural blocks:
+#     - INIT2
+#     - PRE2
+#     - POST2_LO / POST2_HI
+#     - FINAL2
+#
+# Fusion therefore means interleaving these existing x2 building blocks at
+# their natural dependency boundaries, rather than inventing a new coarser
+# block structure or arbitrarily over-fragmenting them.
+
+my $output;
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
+open STDOUT, ">$output";
+
+my ($zero,$ra,$tp,$sp)=map("\$r$_",(0..3));
+my ($a0,$a1,$a2,$a3,$a4,$a5,$a6,$a7)=map("\$r$_",(4..11));
+my ($t0,$t1,$t2,$t3,$t4,$t5,$t6,$t7,$t8,$t9)=map("\$r$_",(12..21));
+my ($s0,$s1,$s2,$s3,$s4,$s5,$s6,$s7,$s8)=("\$r23","\$r24","\$r25","\$r26","\$r27","\$r28","\$r29","\$r30","\$r31");
+my ($fp)=("\$r22");
+my ($vr0,$vr1,$vr2,$vr3,$vr4,$vr5,$vr6,$vr7,$vr8,$vr9,$vr10,$vr11,$vr12,$vr13,$vr14,$vr15,
+    $vr16,$vr17,$vr18,$vr19,$vr20,$vr21,$vr22,$vr23,$vr24,$vr25,$vr26,$vr27,$vr28,$vr29,$vr30,$vr31)
+    = map("\$vr$_",(0..31));
+
+sub emit_rept {
+    my ($body, $count, $comment) = @_;
+    my $out = "";
+    $out .= "    # $comment\n" if $comment;
+    $out .= "    .rept $count\n";
+    $out .= "    $body\n";
+    $out .= "    .endr\n";
+    return $out;
+}
+
+sub emit_528_prep {
+    my ($tab, $shr, $shl, $loop_label, $comment) = @_;
+    my $out = "";
+    $out .= "    # $comment\n" if $comment;
+    $out .= <<"___";
+    ori     \$r14,$tab,0
+    ori     \$r15,$shr,0
+    ori     \$r16,$shl,0
+    li.d    \$r20,16
+$loop_label:
+    ld.d    \$r17,\$r14,0
+    ld.d    \$r18,\$r14,8
+    andi    \$r19,\$r18,0x0f
+    slli.d  \$r19,\$r19,4
+    st.b    \$r19,\$r16,0
+    slli.d  \$r21,\$r17,60
+    srli.d  \$r18,\$r18,4
+    or      \$r18,\$r18,\$r21
+    srli.d  \$r17,\$r17,4
+    st.d    \$r17,\$r15,0
+    st.d    \$r18,\$r15,8
+    addi.d  \$r14,\$r14,16
+    addi.d  \$r15,\$r15,16
+    addi.d  \$r16,\$r16,1
+    addi.d  \$r20,\$r20,-1
+    bnez    \$r20,$loop_label
+___
+    return $out;
+}
+
+sub emit_vpaes_lsx2_top_a {
+    return <<'___';
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+___
+}
+
+sub emit_vpaes_lsx2_top_b {
+    return <<'___';
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+___
+}
+
+sub emit_vpaes_lsx2_top_c {
+    return <<'___';
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+___
+}
+
+# ── Half-round building blocks for fully-unrolled fused AES-GCM ────
+#
+# emit_init_gcm()   – IPT + rk[0], GHASH-safe (only clobbers r16 + VRs)
+# emit_half_front() – top_a+b+c + jo-vxor + SubBytes  (~51 SIMD, 0 GPR)
+# emit_half_back()  – MixColumns  (~27 SIMD, 1 ld.d + 2 vld via r16)
+# emit_final_gcm()  – last-round sbo + ShiftRows (uses r16 temporarily)
+
+sub emit_init_gcm {
+    # Uses preloaded vr27=Lk_ipt[0], vr28=Lk_ipt[16]
+    return <<'___';
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+___
+}
+
+sub emit_half_front {
+    my ($rk_off) = @_;
+    my $out = "";
+    $out .= emit_vpaes_lsx2_top_a();
+    $out .= emit_vpaes_lsx2_top_b();
+    $out .= emit_vpaes_lsx2_top_c();
+    # Complete jo:  vr3 ^= vr1,  vr22 ^= vr20
+    $out .= "    vxor.v    \$vr3,\$vr3,\$vr1\n";
+    $out .= "    vxor.v    \$vr22,\$vr22,\$vr20\n";
+    # SubBytes core – round-key from $s1 + compile-time offset
+    $out .= <<"___";
+    vld       \$vr5,\$s1,$rk_off
+    vori.b    \$vr4,\$vr13,0
+    vori.b    \$vr23,\$vr13,0
+    vori.b    \$vr0,\$vr12,0
+    vori.b    \$vr19,\$vr12,0
+    vshuf.b   \$vr4,\$vr18,\$vr4,\$vr2
+    vshuf.b   \$vr23,\$vr18,\$vr23,\$vr21
+    vshuf.b   \$vr0,\$vr18,\$vr0,\$vr3
+    vshuf.b   \$vr19,\$vr18,\$vr19,\$vr22
+    vxor.v    \$vr4,\$vr4,\$vr5
+    vxor.v    \$vr23,\$vr23,\$vr5
+    vxor.v    \$vr0,\$vr0,\$vr4
+    vxor.v    \$vr19,\$vr19,\$vr23
+___
+    return $out;
+}
+
+sub emit_half_back {
+    my ($round) = @_;
+    my $mc_idx = $round % 4;
+    my $bw_off = $mc_idx * 16;
+    my $fw_off = $bw_off - 64;
+    my $out = "";
+    # mid_b: load MC tables from stack base, sb2 lookups
+    $out .= <<"___";
+    ld.d      \$r16,\$sp,832
+    vld       \$vr1,\$r16,$fw_off
+    vori.b    \$vr5,\$vr15,0
+    vld       \$vr4,\$r16,$bw_off
+    vshuf.b   \$vr5,\$vr18,\$vr5,\$vr2
+    vori.b    \$vr24,\$vr15,0
+    vshuf.b   \$vr24,\$vr18,\$vr24,\$vr21
+    vori.b    \$vr2,\$vr14,0
+    vori.b    \$vr21,\$vr14,0
+    vshuf.b   \$vr2,\$vr18,\$vr2,\$vr3
+    vshuf.b   \$vr21,\$vr18,\$vr21,\$vr22
+    vori.b    \$vr3,\$vr0,0
+    vori.b    \$vr22,\$vr19,0
+    vxor.v    \$vr2,\$vr5,\$vr2
+    vxor.v    \$vr21,\$vr24,\$vr21
+___
+    # mid_c
+    $out .= <<'___';
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+___
+    # mid_d
+    $out .= <<'___';
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+___
+    return $out;
+}
+
+sub emit_final_gcm {
+    my ($final_rk_off, $sr_off) = @_;
+    # Uses preloaded vr29=Lk_sbo[0], vr30=Lk_sbo[16]
+    return <<"___";
+    vld       \$vr5,\$s1,$final_rk_off
+    vshuf.b   \$vr4,\$vr18,\$vr29,\$vr2
+    vshuf.b   \$vr23,\$vr18,\$vr29,\$vr21
+    vxor.v    \$vr4,\$vr4,\$vr5
+    vxor.v    \$vr23,\$vr23,\$vr5
+    vshuf.b   \$vr0,\$vr18,\$vr30,\$vr3
+    vshuf.b   \$vr19,\$vr18,\$vr30,\$vr22
+    ld.d      \$r16,\$sp,832
+    vld       \$vr1,\$r16,$sr_off
+    vxor.v    \$vr0,\$vr0,\$vr4
+    vxor.v    \$vr19,\$vr19,\$vr23
+    vshuf.b   \$vr0,\$vr18,\$vr0,\$vr1
+    vshuf.b   \$vr19,\$vr18,\$vr19,\$vr1
+___
+}
+
+# ── counter / xor-store / seed / advance (stack-based) ───────────────
+
+sub emit_lsx2_counter_pair {
+    return <<'___';
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r16,$r16,1
+    revb.2w     $r16,$r16
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r16,3
+___
+}
+
+sub emit_xor_store_from_stack {
+    return <<'___';
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+___
+}
+
+sub emit_seed_ghash_from_cipher_pair {
+    return <<'___';
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+___
+}
+
+sub emit_advance_counter_pair {
+    return <<'___';
+    ld.w        $r16,$sp,848
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vinsgr2vr.w $vr8,$r17,3
+___
+}
+
+# Merged: loads counter, creates pair, advances, updates template.
+# Saves 1 ld.w vs separate counter_pair + advance_counter_pair.
+sub emit_lsx2_counter_pair_and_advance {
+    return <<'___';
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+___
+}
+
+sub emit_ghash_combine_xi {
+    # revb(A) ^ revb(B) == revb(A^B), saves 2 revb.d
+    return <<'___';
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+___
+}
+
+# ── Decrypt: combined xor-store + GHASH seed ──────────────────────
+# For decrypt, GHASH feeds on ciphertext = the INPUT blocks (before XOR).
+# Extract GHASH input first, then XOR with keystream, then store plaintext.
+sub emit_xor_store_and_seed_decrypt {
+    return <<'___';
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    # Seed GHASH from ciphertext (input, before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream to produce plaintext
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    # Store plaintext output
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+___
+}
+
+sub emit_writeback_xi {
+    return <<'___';
+    st.d        $r4,$fp,0
+    st.d        $r5,$fp,8
+___
+}
+
+# ── GHASH step emitter ──────────────────────────────────────────────
+
+sub emit_ghash_step {
+    my ($step) = @_;           # 1..15
+    if ($step <= 7) {
+        return "    GHASH528_PRE2\n    GHASH528_POST2_LO\n";
+    } else {
+        return "    GHASH528_PRE2\n    GHASH528_POST2_HI\n";
+    }
+}
+
+# ── Fully-unrolled steady-state template ────────────────────────────
+#
+# Nr-1 middle AES rounds (half_front + GHASH slot + half_back) plus
+# 1 final AES round (top + sbo + ShiftRows).
+# 15 GHASH byte-steps (7 LO + 8 HI) are evenly distributed across
+# the 2*(Nr-1) available half-round slots.
+
+sub emit_warmup_state {
+    my ($nr_minus_1) = @_;   # stored rounds: 9 / 11 / 13
+    my $num_rounds = $nr_minus_1;
+    my $final_rk  = ($nr_minus_1 + 1) * 16;
+    my $sr_off    = ((($nr_minus_1 + 1) % 4) * 16) + 64;
+    my $out = "";
+
+    for my $r (1 .. $num_rounds) {
+        my $rk_off = $r * 16;
+        $out .= "    # ── warmup round $r  half-front (rk+$rk_off) ──\n";
+        $out .= emit_half_front($rk_off);
+        $out .= "    # ── warmup round $r  half-back  (mc_idx=" . ($r%4) . ") ──\n";
+        $out .= emit_half_back($r);
+    }
+
+    # Final round
+    $out .= "    # ── warmup final round (rk+$final_rk, sr_off=$sr_off) ──\n";
+    $out .= emit_vpaes_lsx2_top_a();
+    $out .= emit_vpaes_lsx2_top_b();
+    $out .= emit_vpaes_lsx2_top_c();
+    $out .= "    vxor.v    \$vr3,\$vr3,\$vr1\n";
+    $out .= "    vxor.v    \$vr22,\$vr22,\$vr20\n";
+    $out .= emit_final_gcm($final_rk, $sr_off);
+    return $out;
+}
+
+sub emit_steady_state {
+    my ($nr_minus_1) = @_;   # stored rounds: 9 / 11 / 13
+    my $num_rounds = $nr_minus_1;
+    my $final_rk  = ($nr_minus_1 + 1) * 16;
+    my $sr_off    = ((($nr_minus_1 + 1) % 4) * 16) + 64;
+    my $out = "";
+
+    # Evenly distribute 15 GHASH steps across 2*num_rounds slots.
+    # Slot numbering: round r has slot_A = 2*(r-1) and slot_B = 2*(r-1)+1.
+    # Slot_B for last round is not available (final round follows).
+    my $total_slots = 2 * $num_rounds - 1;  # slot_B of last round excluded
+    my %ghash_at;
+    for my $g (0 .. 14) {
+        my $slot = int($g * $total_slots / 15 + 0.5);
+        $slot = $total_slots - 1 if $slot >= $total_slots;
+        $ghash_at{$slot} = $g + 1;  # GHASH step 1..15
+    }
+
+    my $slot = 0;
+    for my $r (1 .. $num_rounds) {
+        my $rk_off = $r * 16;
+        $out .= "    # ── round $r  half-front (rk+$rk_off) ──\n";
+        $out .= emit_half_front($rk_off);
+
+        # Slot A: between half-front and half-back
+        my $slot_a = 2 * ($r - 1);
+        if (exists $ghash_at{$slot_a}) {
+            my $gs = $ghash_at{$slot_a};
+            my $ty = $gs <= 7 ? "LO" : "HI";
+            $out .= "    # GHASH step $gs ($ty)\n";
+            $out .= emit_ghash_step($gs);
+        }
+
+        $out .= "    # ── round $r  half-back  (mc_idx=" . ($r%4) . ") ──\n";
+        $out .= emit_half_back($r);
+
+        # Slot B: between rounds (not available for last round)
+        if ($r < $num_rounds) {
+            my $slot_b = 2 * ($r - 1) + 1;
+            if (exists $ghash_at{$slot_b}) {
+                my $gs = $ghash_at{$slot_b};
+                my $ty = $gs <= 7 ? "LO" : "HI";
+                $out .= "    # GHASH step $gs ($ty)\n";
+                $out .= emit_ghash_step($gs);
+            }
+        }
+    }
+
+    # Final round
+    $out .= "    # ── final round (rk+$final_rk, sr_off=$sr_off) ──\n";
+    $out .= emit_vpaes_lsx2_top_a();
+    $out .= emit_vpaes_lsx2_top_b();
+    $out .= emit_vpaes_lsx2_top_c();
+    $out .= "    vxor.v    \$vr3,\$vr3,\$vr1\n";
+    $out .= "    vxor.v    \$vr22,\$vr22,\$vr20\n";
+    $out .= emit_final_gcm($final_rk, $sr_off);
+    return $out;
+}
+
+my $code = <<'___';
+.text
+
+.macro REDUCE1BIT HI LO TMP0 TMP1 POLY
+    andi    \TMP0,\LO,0x1
+    sub.d   \TMP0,$r0,\TMP0
+    and     \TMP0,\TMP0,\POLY
+    slli.d  \TMP1,\HI,63
+    srli.d  \LO,\LO,1
+    or      \LO,\LO,\TMP1
+    srli.d  \HI,\HI,1
+    xor     \HI,\HI,\TMP0
+.endm
+
+.macro GHASH528_INIT TAB SRCLO CUR ZHI ZLO TBYTE TPTR
+    andi    \TPTR,  \SRCLO, 0x0f
+    bstrpick.d \CUR, \SRCLO, 7, 4
+    alsl.d  \TPTR,  \TPTR, \TAB, 4
+    ld.d    \ZHI,   \TPTR, 0
+    ld.d    \ZLO,   \TPTR, 8
+    srli.d  \SRCLO, \SRCLO, 8
+.endm
+
+.macro GHASH528_PRE SHL SHR CUR ZHI ZLO TRED THI TLO
+    ldx.bu  \TLO,  \SHL, \CUR
+    andi    \TRED, \ZLO, 0xff
+    xor     \TRED, \TRED, \TLO
+    alsl.d  \TRED, \TRED, $s2, 3
+    ld.d    \TRED, \TRED, 0
+    alsl.d  \THI,  \CUR,  \SHR, 4
+    ld.d    \TLO,  \THI,  8
+    ld.d    \THI,  \THI,  0
+.endm
+
+.macro GHASH528_POST TAB SRC CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
+    srli.d  \ZLO,    \ZLO, 8
+    bstrins.d \ZLO, \ZHI, 63, 56
+    srli.d  \ZHI,    \ZHI, 8
+    xor     \ZHI,    \ZHI, \TRED
+    xor     \ZHI,    \ZHI, \THI
+    xor     \ZLO,    \ZLO, \TLO
+
+    andi    \TPTR,   \SRC, 0x0f
+    bstrpick.d \CUR, \SRC, 7, 4
+    alsl.d  \TPTR,   \TPTR, \TAB, 4
+    ld.d    \THI,    \TPTR, 0
+    ld.d    \TLO,    \TPTR, 8
+    xor     \ZHI,    \ZHI, \THI
+    xor     \ZLO,    \ZLO, \TLO
+    srli.d  \SRC,    \SRC, 8
+.endm
+
+.macro GHASH528_FINAL TAB CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
+    andi    \TRED,   \ZLO, 0x0f
+    slli.d  \TRED,   \TRED, 4
+    alsl.d  \TRED,   \TRED, $s2, 3
+    ld.d    \TRED,   \TRED, 0
+    srli.d  \ZLO,    \ZLO, 4
+    bstrins.d \ZLO, \ZHI, 63, 60
+    srli.d  \ZHI,    \ZHI, 4
+    alsl.d  \TPTR,   \CUR, \TAB, 4
+    ld.d    \THI,    \TPTR, 0
+    ld.d    \TLO,    \TPTR, 8
+    xor     \ZHI,    \ZHI, \TRED
+    xor     \ZHI,    \ZHI, \THI
+    xor     \ZLO,    \ZLO, \TLO
+.endm
+
+.macro GHASH528_INIT2
+    GHASH528_INIT $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17
+    GHASH528_INIT $s3, $r12, $r15, $r13, $r14, $r19, $r20
+.endm
+
+.macro GHASH528_PRE2
+    GHASH528_PRE  $s7, $s8, $r10, $r8,  $r9,  $r16, $r17, $r18
+    GHASH528_PRE  $s4, $s5, $r15, $r13, $r14, $r19, $r20, $r21
+.endm
+
+.macro GHASH528_POST2_LO
+    GHASH528_POST $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
+    GHASH528_POST $s3, $r12, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.endm
+
+.macro GHASH528_POST2_HI
+    GHASH528_POST $s6, $r6,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
+    GHASH528_POST $s3, $r11, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.endm
+
+.macro GHASH528_FINAL2
+    GHASH528_FINAL $s6, $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
+    GHASH528_FINAL $s3, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.endm
+
+.section .rodata
+
+# VPAES constant tables (duplicated from vpaes-loongarch64 for same-unit access)
+.align 6
+Lk_inv:
+    .quad 0x0E05060F0D080110, 0x040703090A0B0C02
+    .quad 0x01040A060F0B0710, 0x030D0E0C02050809
+
+Lk_s0F:
+    .quad 0x0F0F0F0F0F0F0F0F, 0x0F0F0F0F0F0F0F0F
+
+Lk_ipt:
+    .quad 0xC2B2E8985A2A7000, 0xCABAE09052227808
+    .quad 0x4C01307D317C4D00, 0xCD80B1FCB0FDCC81
+
+Lk_sb1:
+    .quad 0xB19BE18FCB503E00, 0xA5DF7A6E142AF544
+    .quad 0x3618D415FAE22300, 0x3BF7CCC10D2ED9EF
+Lk_sb2:
+    .quad 0xE27A93C60B712400, 0x5EB7E955BC982FCD
+    .quad 0x69EB88400AE12900, 0xC2A163C8AB82234A
+Lk_sbo:
+    .quad 0xD0D26D176FBDC700, 0x15AABF7AC502A878
+    .quad 0xCFE474A55FBB6A00, 0x8E1E90D1412B35FA
+
+Lk_mc_forward:
+    .quad 0x0407060500030201, 0x0C0F0E0D080B0A09
+    .quad 0x080B0A0904070605, 0x000302010C0F0E0D
+    .quad 0x0C0F0E0D080B0A09, 0x0407060500030201
+    .quad 0x000302010C0F0E0D, 0x080B0A0904070605
+
+Lk_mc_backward:
+    .quad 0x0605040702010003, 0x0E0D0C0F0A09080B
+    .quad 0x020100030E0D0C0F, 0x0A09080B06050407
+    .quad 0x0E0D0C0F0A09080B, 0x0605040702010003
+    .quad 0x0A09080B06050407, 0x020100030E0D0C0F
+
+Lk_sr:
+    .quad 0x0706050403020100, 0x0F0E0D0C0B0A0908
+    .quad 0x030E09040F0A0500, 0x0B06010C07020D08
+    .quad 0x0F060D040B020900, 0x070E050C030A0108
+    .quad 0x0B0E0104070A0D00, 0x0306090C0F020508
+
+.align 4
+.Lrem_4bit:
+    .dword 0x0000000000000000
+    .dword 0x1C20000000000000
+    .dword 0x3840000000000000
+    .dword 0x2460000000000000
+    .dword 0x7080000000000000
+    .dword 0x6CA0000000000000
+    .dword 0x48C0000000000000
+    .dword 0x54E0000000000000
+    .dword 0xE100000000000000
+    .dword 0xFD20000000000000
+    .dword 0xD940000000000000
+    .dword 0xC560000000000000
+    .dword 0x9180000000000000
+    .dword 0x8DA0000000000000
+    .dword 0xA9C0000000000000
+    .dword 0xB5E0000000000000
+
+.align 4
+.Lrem_8bit:
+    .hword 0x0000, 0x01C2, 0x0384, 0x0246, 0x0708, 0x06CA, 0x048C, 0x054E
+    .hword 0x0E10, 0x0FD2, 0x0D94, 0x0C56, 0x0918, 0x08DA, 0x0A9C, 0x0B5E
+    .hword 0x1C20, 0x1DE2, 0x1FA4, 0x1E66, 0x1B28, 0x1AEA, 0x18AC, 0x196E
+    .hword 0x1230, 0x13F2, 0x11B4, 0x1076, 0x1538, 0x14FA, 0x16BC, 0x177E
+    .hword 0x3840, 0x3982, 0x3BC4, 0x3A06, 0x3F48, 0x3E8A, 0x3CCC, 0x3D0E
+    .hword 0x3650, 0x3792, 0x35D4, 0x3416, 0x3158, 0x309A, 0x32DC, 0x331E
+    .hword 0x2460, 0x25A2, 0x27E4, 0x2626, 0x2368, 0x22AA, 0x20EC, 0x212E
+    .hword 0x2A70, 0x2BB2, 0x29F4, 0x2836, 0x2D78, 0x2CBA, 0x2EFC, 0x2F3E
+    .hword 0x7080, 0x7142, 0x7304, 0x72C6, 0x7788, 0x764A, 0x740C, 0x75CE
+    .hword 0x7E90, 0x7F52, 0x7D14, 0x7CD6, 0x7998, 0x785A, 0x7A1C, 0x7BDE
+    .hword 0x6CA0, 0x6D62, 0x6F24, 0x6EE6, 0x6BA8, 0x6A6A, 0x682C, 0x69EE
+    .hword 0x62B0, 0x6372, 0x6134, 0x60F6, 0x65B8, 0x647A, 0x663C, 0x67FE
+    .hword 0x48C0, 0x4902, 0x4B44, 0x4A86, 0x4FC8, 0x4E0A, 0x4C4C, 0x4D8E
+    .hword 0x46D0, 0x4712, 0x4554, 0x4496, 0x41D8, 0x401A, 0x425C, 0x439E
+    .hword 0x54E0, 0x5522, 0x5764, 0x56A6, 0x53E8, 0x522A, 0x506C, 0x51AE
+    .hword 0x5AF0, 0x5B32, 0x5974, 0x58B6, 0x5DF8, 0x5C3A, 0x5E7C, 0x5FBE
+    .hword 0xE100, 0xE0C2, 0xE284, 0xE346, 0xE608, 0xE7CA, 0xE58C, 0xE44E
+    .hword 0xEF10, 0xEED2, 0xEC94, 0xED56, 0xE818, 0xE9DA, 0xEB9C, 0xEA5E
+    .hword 0xFD20, 0xFCE2, 0xFEA4, 0xFF66, 0xFA28, 0xFBEA, 0xF9AC, 0xF86E
+    .hword 0xF330, 0xF2F2, 0xF0B4, 0xF176, 0xF438, 0xF5FA, 0xF7BC, 0xF67E
+    .hword 0xD940, 0xD882, 0xDAC4, 0xDB06, 0xDE48, 0xDF8A, 0xDDCC, 0xDC0E
+    .hword 0xD750, 0xD692, 0xD4D4, 0xD516, 0xD058, 0xD19A, 0xD3DC, 0xD21E
+    .hword 0xC560, 0xC4A2, 0xC6E4, 0xC726, 0xC268, 0xC3AA, 0xC1EC, 0xC02E
+    .hword 0xCB70, 0xCAB2, 0xC8F4, 0xC936, 0xCC78, 0xCDBA, 0xCFFC, 0xCE3E
+    .hword 0x9180, 0x9042, 0x9204, 0x93C6, 0x9688, 0x974A, 0x950C, 0x94CE
+    .hword 0x9F90, 0x9E52, 0x9C14, 0x9DD6, 0x9898, 0x995A, 0x9B1C, 0x9ADE
+    .hword 0x8DA0, 0x8C62, 0x8E24, 0x8FE6, 0x8AA8, 0x8B6A, 0x892C, 0x88EE
+    .hword 0x83B0, 0x8272, 0x8034, 0x81F6, 0x84B8, 0x857A, 0x873C, 0x86FE
+    .hword 0xA9C0, 0xA802, 0xAA44, 0xAB86, 0xAEC8, 0xAF0A, 0xAD4C, 0xAC8E
+    .hword 0xA7D0, 0xA612, 0xA454, 0xA596, 0xA0D8, 0xA11A, 0xA35C, 0xA29E
+    .hword 0xB5E0, 0xB422, 0xB664, 0xB7A6, 0xB2E8, 0xB32A, 0xB16C, 0xB0AE
+    .hword 0xBBF0, 0xBA32, 0xB874, 0xB9B6, 0xBCF8, 0xBD3A, 0xBF7C, 0xBEBE
+
+# Pre-shifted reduction table: each entry = rem_8bit[i] << 48, stored as .dword
+# Eliminates slli.d 48 after each lookup in GHASH528_PRE/FINAL
+.align 4
+.Lrem_8bit_shl48:
+    .dword 0x0000000000000000, 0x01C2000000000000, 0x0384000000000000, 0x0246000000000000
+    .dword 0x0708000000000000, 0x06CA000000000000, 0x048C000000000000, 0x054E000000000000
+    .dword 0x0E10000000000000, 0x0FD2000000000000, 0x0D94000000000000, 0x0C56000000000000
+    .dword 0x0918000000000000, 0x08DA000000000000, 0x0A9C000000000000, 0x0B5E000000000000
+    .dword 0x1C20000000000000, 0x1DE2000000000000, 0x1FA4000000000000, 0x1E66000000000000
+    .dword 0x1B28000000000000, 0x1AEA000000000000, 0x18AC000000000000, 0x196E000000000000
+    .dword 0x1230000000000000, 0x13F2000000000000, 0x11B4000000000000, 0x1076000000000000
+    .dword 0x1538000000000000, 0x14FA000000000000, 0x16BC000000000000, 0x177E000000000000
+    .dword 0x3840000000000000, 0x3982000000000000, 0x3BC4000000000000, 0x3A06000000000000
+    .dword 0x3F48000000000000, 0x3E8A000000000000, 0x3CCC000000000000, 0x3D0E000000000000
+    .dword 0x3650000000000000, 0x3792000000000000, 0x35D4000000000000, 0x3416000000000000
+    .dword 0x3158000000000000, 0x309A000000000000, 0x32DC000000000000, 0x331E000000000000
+    .dword 0x2460000000000000, 0x25A2000000000000, 0x27E4000000000000, 0x2626000000000000
+    .dword 0x2368000000000000, 0x22AA000000000000, 0x20EC000000000000, 0x212E000000000000
+    .dword 0x2A70000000000000, 0x2BB2000000000000, 0x29F4000000000000, 0x2836000000000000
+    .dword 0x2D78000000000000, 0x2CBA000000000000, 0x2EFC000000000000, 0x2F3E000000000000
+    .dword 0x7080000000000000, 0x7142000000000000, 0x7304000000000000, 0x72C6000000000000
+    .dword 0x7788000000000000, 0x764A000000000000, 0x740C000000000000, 0x75CE000000000000
+    .dword 0x7E90000000000000, 0x7F52000000000000, 0x7D14000000000000, 0x7CD6000000000000
+    .dword 0x7998000000000000, 0x785A000000000000, 0x7A1C000000000000, 0x7BDE000000000000
+    .dword 0x6CA0000000000000, 0x6D62000000000000, 0x6F24000000000000, 0x6EE6000000000000
+    .dword 0x6BA8000000000000, 0x6A6A000000000000, 0x682C000000000000, 0x69EE000000000000
+    .dword 0x62B0000000000000, 0x6372000000000000, 0x6134000000000000, 0x60F6000000000000
+    .dword 0x65B8000000000000, 0x647A000000000000, 0x663C000000000000, 0x67FE000000000000
+    .dword 0x48C0000000000000, 0x4902000000000000, 0x4B44000000000000, 0x4A86000000000000
+    .dword 0x4FC8000000000000, 0x4E0A000000000000, 0x4C4C000000000000, 0x4D8E000000000000
+    .dword 0x46D0000000000000, 0x4712000000000000, 0x4554000000000000, 0x4496000000000000
+    .dword 0x41D8000000000000, 0x401A000000000000, 0x425C000000000000, 0x439E000000000000
+    .dword 0x54E0000000000000, 0x5522000000000000, 0x5764000000000000, 0x56A6000000000000
+    .dword 0x53E8000000000000, 0x522A000000000000, 0x506C000000000000, 0x51AE000000000000
+    .dword 0x5AF0000000000000, 0x5B32000000000000, 0x5974000000000000, 0x58B6000000000000
+    .dword 0x5DF8000000000000, 0x5C3A000000000000, 0x5E7C000000000000, 0x5FBE000000000000
+    .dword 0xE100000000000000, 0xE0C2000000000000, 0xE284000000000000, 0xE346000000000000
+    .dword 0xE608000000000000, 0xE7CA000000000000, 0xE58C000000000000, 0xE44E000000000000
+    .dword 0xEF10000000000000, 0xEED2000000000000, 0xEC94000000000000, 0xED56000000000000
+    .dword 0xE818000000000000, 0xE9DA000000000000, 0xEB9C000000000000, 0xEA5E000000000000
+    .dword 0xFD20000000000000, 0xFCE2000000000000, 0xFEA4000000000000, 0xFF66000000000000
+    .dword 0xFA28000000000000, 0xFBEA000000000000, 0xF9AC000000000000, 0xF86E000000000000
+    .dword 0xF330000000000000, 0xF2F2000000000000, 0xF0B4000000000000, 0xF176000000000000
+    .dword 0xF438000000000000, 0xF5FA000000000000, 0xF7BC000000000000, 0xF67E000000000000
+    .dword 0xD940000000000000, 0xD882000000000000, 0xDAC4000000000000, 0xDB06000000000000
+    .dword 0xDE48000000000000, 0xDF8A000000000000, 0xDDCC000000000000, 0xDC0E000000000000
+    .dword 0xD750000000000000, 0xD692000000000000, 0xD4D4000000000000, 0xD516000000000000
+    .dword 0xD058000000000000, 0xD19A000000000000, 0xD3DC000000000000, 0xD21E000000000000
+    .dword 0xC560000000000000, 0xC4A2000000000000, 0xC6E4000000000000, 0xC726000000000000
+    .dword 0xC268000000000000, 0xC3AA000000000000, 0xC1EC000000000000, 0xC02E000000000000
+    .dword 0xCB70000000000000, 0xCAB2000000000000, 0xC8F4000000000000, 0xC936000000000000
+    .dword 0xCC78000000000000, 0xCDBA000000000000, 0xCFFC000000000000, 0xCE3E000000000000
+    .dword 0x9180000000000000, 0x9042000000000000, 0x9204000000000000, 0x93C6000000000000
+    .dword 0x9688000000000000, 0x974A000000000000, 0x950C000000000000, 0x94CE000000000000
+    .dword 0x9F90000000000000, 0x9E52000000000000, 0x9C14000000000000, 0x9DD6000000000000
+    .dword 0x9898000000000000, 0x995A000000000000, 0x9B1C000000000000, 0x9ADE000000000000
+    .dword 0x8DA0000000000000, 0x8C62000000000000, 0x8E24000000000000, 0x8FE6000000000000
+    .dword 0x8AA8000000000000, 0x8B6A000000000000, 0x892C000000000000, 0x88EE000000000000
+    .dword 0x83B0000000000000, 0x8272000000000000, 0x8034000000000000, 0x81F6000000000000
+    .dword 0x84B8000000000000, 0x857A000000000000, 0x873C000000000000, 0x86FE000000000000
+    .dword 0xA9C0000000000000, 0xA802000000000000, 0xAA44000000000000, 0xAB86000000000000
+    .dword 0xAEC8000000000000, 0xAF0A000000000000, 0xAD4C000000000000, 0xAC8E000000000000
+    .dword 0xA7D0000000000000, 0xA612000000000000, 0xA454000000000000, 0xA596000000000000
+    .dword 0xA0D8000000000000, 0xA11A000000000000, 0xA35C000000000000, 0xA29E000000000000
+    .dword 0xB5E0000000000000, 0xB422000000000000, 0xB664000000000000, 0xB7A6000000000000
+    .dword 0xB2E8000000000000, 0xB32A000000000000, 0xB16C000000000000, 0xB0AE000000000000
+    .dword 0xBBF0000000000000, 0xBA32000000000000, 0xB874000000000000, 0xB9B6000000000000
+    .dword 0xBCF8000000000000, 0xBD3A000000000000, 0xBF7C000000000000, 0xBEBE000000000000
+
+.text
+
+# Local copy of _vpaes_preheat for this compilation unit.
+# Loads VPAES constant tables into vr9-vr15, vr18.
+.align 4
+_vpaes_preheat:
+    la.local  $a6,Lk_s0F
+    vld       $vr10,$a6,-0x20
+    vld       $vr11,$a6,-0x10
+    vld       $vr9,$a6,0
+    vld       $vr13,$a6,0x30
+    vld       $vr12,$a6,0x40
+    vld       $vr15,$a6,0x50
+    vld       $vr14,$a6,0x60
+    vldi      $vr18,0
+    jirl      $zero,$ra,0
+
+.globl  loongarch64_vpaes_gcm_encrypt
+.type   loongarch64_vpaes_gcm_encrypt,@function
+.align  4
+loongarch64_vpaes_gcm_encrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_enc_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0           # Xi*
+    ori     $s1,$a3,0           # AES key schedule
+    # aligned_len = len & -32
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_enc_done
+
+    # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+
+    st.d    $s0,$sp,856         # save aligned_len for return
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32          # Htable base
+    ori     $s4,$sp,0           # H shl4 bytes
+    addi.d  $s5,$sp,16          # H shr4 table
+    addi.d  $s6,$sp,272         # H^2 4-bit table
+    addi.d  $s7,$sp,528         # H^2 shl4 bytes
+    addi.d  $s8,$sp,544         # H^2 shr4 table
+
+___
+$code .= emit_528_prep('$s3', '$s5', '$s4', '.Lprep_h_528',
+    'Build H 528B helpers.');
+$code .= <<'___';
+
+    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # H.u[0..1] at $fp+16 are already BSWAP'd by CRYPTO_gcm128_init.
+    # Feed them directly (without revb) so the byte-by-byte multiply
+    # processes byte[15]→byte[0], matching gcm_ghash_4bit's order.
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Lgcm_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Lgcm_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    # Expand raw H^2 into the 16-entry 4-bit table layout.
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+___
+$code .= emit_528_prep('$s6', '$s8', '$s7', '.Lprep_h2_528',
+    'Build H^2 528B helpers.');
+$code .= <<'___';
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # Preheat VPAES constants.
+    ori     $a2,$s1,0
+    bl      _vpaes_preheat
+
+    # Save MC table base for unrolled steady state.
+    la.local $r16,Lk_mc_backward
+    st.d    $r16,$sp,832
+
+    # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
+    la.local $r16,Lk_ipt
+    vld     $vr27,$r16,0
+    vld     $vr28,$r16,16
+    la.local $r16,Lk_sbo
+    vld     $vr29,$r16,0
+    vld     $vr30,$r16,16
+
+    # Load Xi state (must be after preheat which clobbers $r4/$r5).
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── warmup: encrypt pair 0 (unrolled, no GHASH) ──────────────
+___
+$code .= emit_lsx2_counter_pair();
+$code .= emit_init_gcm();
+
+# Warmup dispatch by key size
+$code .= <<'___';
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lwarm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lwarm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lwarm_256
+    b           .Lgcm_enc_done
+.Lwarm_128:
+___
+$code .= emit_warmup_state(9);
+$code .= <<'___';
+    b           .Lwarm_after
+.Lwarm_192:
+___
+$code .= emit_warmup_state(11);
+$code .= <<'___';
+    b           .Lwarm_after
+.Lwarm_256:
+___
+$code .= emit_warmup_state(13);
+$code .= <<'___';
+.Lwarm_after:
+
+    # ── warmup after-body: xor-store, seed GHASH, INIT2, advance ──
+___
+$code .= emit_xor_store_from_stack();
+$code .= emit_seed_ghash_from_cipher_pair();
+$code .= <<'___';
+    GHASH528_INIT2
+___
+$code .= emit_advance_counter_pair();
+$code .= <<'___';
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_drain
+
+    # ─── key-size dispatch (once, outside loop) ─────────────────────
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_loop_256
+    b           .Lgcm_enc_done
+
+    # ── AES-128 self-contained loop ────────────────────────────────
+.Lgcm_loop_128:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(9);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack();
+$code .= emit_seed_ghash_from_cipher_pair();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_128
+    b           .Lgcm_drain
+
+    # ── AES-192 self-contained loop ────────────────────────────────
+.Lgcm_loop_192:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(11);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack();
+$code .= emit_seed_ghash_from_cipher_pair();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_192
+    b           .Lgcm_drain
+
+    # ── AES-256 self-contained loop ────────────────────────────────
+.Lgcm_loop_256:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(13);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack();
+$code .= emit_seed_ghash_from_cipher_pair();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_256
+    b           .Lgcm_drain
+
+    # ─── drain: finish last GHASH (non-interleaved) ─────────────────
+.Lgcm_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_writeback_xi();
+$code .= <<'___';
+    # Write counter back to ivec.
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_enc_done:
+    ld.d    $a0,$sp,856         # return aligned_len
+
+.Lgcm_epilogue:
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_enc_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_gcm_encrypt,.-loongarch64_vpaes_gcm_encrypt
+
+___
+
+# ═══════════════════════════════════════════════════════════════════
+#  DECRYPT function
+# ═══════════════════════════════════════════════════════════════════
+# Identical to encrypt except GHASH feeds on ciphertext (input)
+# rather than on the XOR result (output).
+
+$code .= <<'___';
+.globl  loongarch64_vpaes_gcm_decrypt
+.type   loongarch64_vpaes_gcm_decrypt,@function
+.align  4
+loongarch64_vpaes_gcm_decrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_dec_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0           # Xi*
+    ori     $s1,$a3,0           # AES key schedule
+    # aligned_len = len & -32
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_dec_done
+
+    # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+
+    st.d    $s0,$sp,856         # save aligned_len for return
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32          # Htable base
+    ori     $s4,$sp,0           # H shl4 bytes
+    addi.d  $s5,$sp,16          # H shr4 table
+    addi.d  $s6,$sp,272         # H^2 4-bit table
+    addi.d  $s7,$sp,528         # H^2 shl4 bytes
+    addi.d  $s8,$sp,544         # H^2 shr4 table
+
+___
+$code .= emit_528_prep('$s3', '$s5', '$s4', '.Ldec_prep_h_528',
+    'Build H 528B helpers (decrypt).');
+$code .= <<'___';
+
+    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Ldec_gcm_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_gcm_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Ldec_gcm_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_gcm_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    # Expand raw H^2 into the 16-entry 4-bit table layout.
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+___
+$code .= emit_528_prep('$s6', '$s8', '$s7', '.Ldec_prep_h2_528',
+    'Build H^2 528B helpers (decrypt).');
+$code .= <<'___';
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # Preheat VPAES constants.
+    ori     $a2,$s1,0
+    bl      _vpaes_preheat
+
+    # Save MC table base for unrolled steady state.
+    la.local $r16,Lk_mc_backward
+    st.d    $r16,$sp,832
+
+    # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
+    la.local $r16,Lk_ipt
+    vld     $vr27,$r16,0
+    vld     $vr28,$r16,16
+    la.local $r16,Lk_sbo
+    vld     $vr29,$r16,0
+    vld     $vr30,$r16,16
+
+    # Load Xi state (must be after preheat which clobbers $r4/$r5).
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── warmup: decrypt pair 0 (unrolled, no GHASH) ──────────────
+___
+$code .= emit_lsx2_counter_pair();
+$code .= emit_init_gcm();
+
+# Warmup dispatch by key size (decrypt)
+$code .= <<'___';
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Ldec_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Ldec_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Ldec_warm_256
+    b           .Lgcm_dec_done
+.Ldec_warm_128:
+___
+$code .= emit_warmup_state(9);
+$code .= <<'___';
+    b           .Ldec_warm_after
+.Ldec_warm_192:
+___
+$code .= emit_warmup_state(11);
+$code .= <<'___';
+    b           .Ldec_warm_after
+.Ldec_warm_256:
+___
+$code .= emit_warmup_state(13);
+$code .= <<'___';
+.Ldec_warm_after:
+
+    # ── warmup after-body: xor-store+seed (decrypt), INIT2, advance ──
+___
+$code .= emit_xor_store_and_seed_decrypt();
+$code .= <<'___';
+    GHASH528_INIT2
+___
+$code .= emit_advance_counter_pair();
+$code .= <<'___';
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_dec_drain
+
+    # ─── key-size dispatch (once, outside loop) ─────────────────────
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_dec_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_dec_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_dec_loop_256
+    b           .Lgcm_dec_done
+
+    # ── AES-128 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_128:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(9);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_128
+    b           .Lgcm_dec_drain
+
+    # ── AES-192 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_192:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(11);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_192
+    b           .Lgcm_dec_drain
+
+    # ── AES-256 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_256:
+___
+$code .= emit_lsx2_counter_pair_and_advance();
+$code .= emit_init_gcm();
+$code .= emit_steady_state(13);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_256
+    b           .Lgcm_dec_drain
+
+    # ─── drain: finish last GHASH (non-interleaved) ─────────────────
+.Lgcm_dec_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_writeback_xi();
+$code .= <<'___';
+    # Write counter back to ivec.
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_dec_done:
+    ld.d    $a0,$sp,856         # return aligned_len
+
+.Lgcm_dec_epilogue:
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_dec_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_gcm_decrypt,.-loongarch64_vpaes_gcm_decrypt
+
+___
+
+print $code;
+close STDOUT or die "error closing STDOUT: $!";

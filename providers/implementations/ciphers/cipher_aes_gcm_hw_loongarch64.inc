@@ -13,6 +13,8 @@
  *
  * Route AES operations through the VPAES CTR path when LSX is available,
  * while leaving GHASH selection to the normal gcm128 dispatch.
+ * Fused AES-GCM encrypt/decrypt is handled by generic_aes_gcm_cipher_update
+ * via the AES_GCM_ASM macros defined in aes_platform.h.
  */
 
 static int loongarch64_aes_gcm_initkey(PROV_GCM_CTX *ctx, const unsigned char *key,

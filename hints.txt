@@ -1,0 +1,43 @@
+our project is openssl , target is adding aes-CTR multi-block lsx/lasx parallel block support, adding ghash multi block support.
+and finally add aes-gcm fused multi-block paralle lsx/lasx support.
+we have done:
+1. CTR : lsx 2x path, lasx 4x path (2x lasx ,lasx internal hi/lo 128bit lane for 2x path)
+2. ghash: 528B 2x path
+we need to imp a solid aes-gcm fused lsx/lasx accelerated path.
+read last 4-5 commits to understanding what we did, and read un-commited changes to knwo the draft of aes-gcm .
+after read and analyse all these background. propose an plan for aes-gcm fused path, which meet those needs:
+1. lsx x2 vpaes + ghash x2 path, this is the baseline
+2. evaluate if lasx x4 + ghash x2 path is balanced. do we need a ghash x4 path, would ghash x4 path hit cpu OoO boundery.
+
+these are thing you may need.
+1. loongarch_inst.txt is loongarch non-simd inst maunal
+2. LSX_LASX_DETAILED.md is lsx/lasx inst maunal ,contain cycles/IPC info
+3. make -j32 to compile , add LD_LIBRARY_PATH if you what to run compiled binary
+
+
+我们的目标是la664核心:
+它是 6发射(6-issue)核心,有4个alu,4个fp/simd单元, 2load,2store,每周期可以发射2个256-bits load或store
+alu-fp/simd每周期可以传输1次(64bits).
+rob256项,但smp时每个线程只能使用128项. L1 D-cache和I-cache各64k, L2 256K
+这是微架构约束.
+这个约束下你需要评估aes-gcm vpaes和ghash 指令交错编排的粒度,草稿里的粒度没有经过评估.应当无法作为参考.
+目前 openssl aes-128-ctr 约 620MB/s ,aes-128-gcm 约220MB/s,如果需要你可以使用openssl speed -evp aes-128-ctr/gcm测试
+如果需要你可以使用perf 工具获取对应cycle数,IPC,L1 miss率等信息,也可以用 perf anno 获取当前 vpaes和ghash指令热点.
+充分考虑这些信息,制定一个详细计划,由我审阅
+
+
+审阅意见:
+1. 半轮交错
+2. 跳过lasx gcm,目前不考虑,等到 lsx x2 + ghash x2 完成后,可以考虑 lasx (高低128lane x2) + ghash x2路径(应当比lsx x2 略好)
+3. 暂时不考虑节省I-cache,先把128/192/256全部完全展开.
+按照审阅意见开始 实现 
+
+
+good work. now commit your work amend to last commit and make it a official commit.
+then we focus on next task:
+we've done lsx x2 + ghash x2 fused aes-gcm path. now we need to imp lasx( x2 in 2 128bits-lane) + ghash x2 path.
+this path should save near 50% simd insts.
+1. imp lasx (x2 in 2-128bits-lane) + ghash x2 path
+2. openssl auto choose path with hardware cap
+3. test and fix problem after you done the lasx path.
+4. opt the lax path same with perf/perf anno for 5-rounds.
