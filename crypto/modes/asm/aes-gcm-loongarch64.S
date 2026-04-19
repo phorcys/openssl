@@ -12,9 +12,8 @@
 .endm
 
 .macro GHASH528_INIT TAB SRCLO CUR ZHI ZLO TBYTE TPTR
-    andi    \TBYTE, \SRCLO, 0xff
-    andi    \TPTR,  \TBYTE, 0x0f
-    srli.d  \CUR,   \TBYTE, 4
+    andi    \TPTR,  \SRCLO, 0x0f
+    bstrpick.d \CUR, \SRCLO, 7, 4
     alsl.d  \TPTR,  \TPTR, \TAB, 4
     ld.d    \ZHI,   \TPTR, 0
     ld.d    \ZLO,   \TPTR, 8
@@ -25,26 +24,23 @@
     ldx.bu  \TLO,  \SHL, \CUR
     andi    \TRED, \ZLO, 0xff
     xor     \TRED, \TRED, \TLO
-    alsl.d  \TRED, \TRED, $s2, 1
-    ld.hu   \TRED, \TRED, 0
-    slli.d  \TRED, \TRED, 48
+    alsl.d  \TRED, \TRED, $s2, 3
+    ld.d    \TRED, \TRED, 0
     alsl.d  \THI,  \CUR,  \SHR, 4
     ld.d    \TLO,  \THI,  8
     ld.d    \THI,  \THI,  0
 .endm
 
 .macro GHASH528_POST TAB SRC CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    slli.d  \TSHIFT, \ZHI, 56
-    srli.d  \ZHI,    \ZHI, 8
     srli.d  \ZLO,    \ZLO, 8
-    or      \ZLO,    \ZLO, \TSHIFT
+    bstrins.d \ZLO, \ZHI, 63, 56
+    srli.d  \ZHI,    \ZHI, 8
     xor     \ZHI,    \ZHI, \TRED
     xor     \ZHI,    \ZHI, \THI
     xor     \ZLO,    \ZLO, \TLO
 
-    andi    \TRED,   \SRC, 0xff
-    andi    \TPTR,   \TRED, 0x0f
-    srli.d  \CUR,    \TRED, 4
+    andi    \TPTR,   \SRC, 0x0f
+    bstrpick.d \CUR, \SRC, 7, 4
     alsl.d  \TPTR,   \TPTR, \TAB, 4
     ld.d    \THI,    \TPTR, 0
     ld.d    \TLO,    \TPTR, 8
@@ -54,16 +50,13 @@
 .endm
 
 .macro GHASH528_FINAL TAB CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    andi    \TRED,   \ZLO, 0xff
+    andi    \TRED,   \ZLO, 0x0f
     slli.d  \TRED,   \TRED, 4
-    andi    \TRED,   \TRED, 0xff
-    alsl.d  \TRED,   \TRED, $s2, 1
-    ld.hu   \TRED,   \TRED, 0
-    slli.d  \TRED,   \TRED, 48
-    slli.d  \TSHIFT, \ZHI, 60
-    srli.d  \ZHI,    \ZHI, 4
+    alsl.d  \TRED,   \TRED, $s2, 3
+    ld.d    \TRED,   \TRED, 0
     srli.d  \ZLO,    \ZLO, 4
-    or      \ZLO,    \ZLO, \TSHIFT
+    bstrins.d \ZLO, \ZHI, 63, 60
+    srli.d  \ZHI,    \ZHI, 4
     alsl.d  \TPTR,   \CUR, \TAB, 4
     ld.d    \THI,    \TPTR, 0
     ld.d    \TLO,    \TPTR, 8
@@ -194,6 +187,75 @@ Lk_sr:
     .hword 0xB5E0, 0xB422, 0xB664, 0xB7A6, 0xB2E8, 0xB32A, 0xB16C, 0xB0AE
     .hword 0xBBF0, 0xBA32, 0xB874, 0xB9B6, 0xBCF8, 0xBD3A, 0xBF7C, 0xBEBE
 
+# Pre-shifted reduction table: each entry = rem_8bit[i] << 48, stored as .dword
+# Eliminates slli.d 48 after each lookup in GHASH528_PRE/FINAL
+.align 4
+.Lrem_8bit_shl48:
+    .dword 0x0000000000000000, 0x01C2000000000000, 0x0384000000000000, 0x0246000000000000
+    .dword 0x0708000000000000, 0x06CA000000000000, 0x048C000000000000, 0x054E000000000000
+    .dword 0x0E10000000000000, 0x0FD2000000000000, 0x0D94000000000000, 0x0C56000000000000
+    .dword 0x0918000000000000, 0x08DA000000000000, 0x0A9C000000000000, 0x0B5E000000000000
+    .dword 0x1C20000000000000, 0x1DE2000000000000, 0x1FA4000000000000, 0x1E66000000000000
+    .dword 0x1B28000000000000, 0x1AEA000000000000, 0x18AC000000000000, 0x196E000000000000
+    .dword 0x1230000000000000, 0x13F2000000000000, 0x11B4000000000000, 0x1076000000000000
+    .dword 0x1538000000000000, 0x14FA000000000000, 0x16BC000000000000, 0x177E000000000000
+    .dword 0x3840000000000000, 0x3982000000000000, 0x3BC4000000000000, 0x3A06000000000000
+    .dword 0x3F48000000000000, 0x3E8A000000000000, 0x3CCC000000000000, 0x3D0E000000000000
+    .dword 0x3650000000000000, 0x3792000000000000, 0x35D4000000000000, 0x3416000000000000
+    .dword 0x3158000000000000, 0x309A000000000000, 0x32DC000000000000, 0x331E000000000000
+    .dword 0x2460000000000000, 0x25A2000000000000, 0x27E4000000000000, 0x2626000000000000
+    .dword 0x2368000000000000, 0x22AA000000000000, 0x20EC000000000000, 0x212E000000000000
+    .dword 0x2A70000000000000, 0x2BB2000000000000, 0x29F4000000000000, 0x2836000000000000
+    .dword 0x2D78000000000000, 0x2CBA000000000000, 0x2EFC000000000000, 0x2F3E000000000000
+    .dword 0x7080000000000000, 0x7142000000000000, 0x7304000000000000, 0x72C6000000000000
+    .dword 0x7788000000000000, 0x764A000000000000, 0x740C000000000000, 0x75CE000000000000
+    .dword 0x7E90000000000000, 0x7F52000000000000, 0x7D14000000000000, 0x7CD6000000000000
+    .dword 0x7998000000000000, 0x785A000000000000, 0x7A1C000000000000, 0x7BDE000000000000
+    .dword 0x6CA0000000000000, 0x6D62000000000000, 0x6F24000000000000, 0x6EE6000000000000
+    .dword 0x6BA8000000000000, 0x6A6A000000000000, 0x682C000000000000, 0x69EE000000000000
+    .dword 0x62B0000000000000, 0x6372000000000000, 0x6134000000000000, 0x60F6000000000000
+    .dword 0x65B8000000000000, 0x647A000000000000, 0x663C000000000000, 0x67FE000000000000
+    .dword 0x48C0000000000000, 0x4902000000000000, 0x4B44000000000000, 0x4A86000000000000
+    .dword 0x4FC8000000000000, 0x4E0A000000000000, 0x4C4C000000000000, 0x4D8E000000000000
+    .dword 0x46D0000000000000, 0x4712000000000000, 0x4554000000000000, 0x4496000000000000
+    .dword 0x41D8000000000000, 0x401A000000000000, 0x425C000000000000, 0x439E000000000000
+    .dword 0x54E0000000000000, 0x5522000000000000, 0x5764000000000000, 0x56A6000000000000
+    .dword 0x53E8000000000000, 0x522A000000000000, 0x506C000000000000, 0x51AE000000000000
+    .dword 0x5AF0000000000000, 0x5B32000000000000, 0x5974000000000000, 0x58B6000000000000
+    .dword 0x5DF8000000000000, 0x5C3A000000000000, 0x5E7C000000000000, 0x5FBE000000000000
+    .dword 0xE100000000000000, 0xE0C2000000000000, 0xE284000000000000, 0xE346000000000000
+    .dword 0xE608000000000000, 0xE7CA000000000000, 0xE58C000000000000, 0xE44E000000000000
+    .dword 0xEF10000000000000, 0xEED2000000000000, 0xEC94000000000000, 0xED56000000000000
+    .dword 0xE818000000000000, 0xE9DA000000000000, 0xEB9C000000000000, 0xEA5E000000000000
+    .dword 0xFD20000000000000, 0xFCE2000000000000, 0xFEA4000000000000, 0xFF66000000000000
+    .dword 0xFA28000000000000, 0xFBEA000000000000, 0xF9AC000000000000, 0xF86E000000000000
+    .dword 0xF330000000000000, 0xF2F2000000000000, 0xF0B4000000000000, 0xF176000000000000
+    .dword 0xF438000000000000, 0xF5FA000000000000, 0xF7BC000000000000, 0xF67E000000000000
+    .dword 0xD940000000000000, 0xD882000000000000, 0xDAC4000000000000, 0xDB06000000000000
+    .dword 0xDE48000000000000, 0xDF8A000000000000, 0xDDCC000000000000, 0xDC0E000000000000
+    .dword 0xD750000000000000, 0xD692000000000000, 0xD4D4000000000000, 0xD516000000000000
+    .dword 0xD058000000000000, 0xD19A000000000000, 0xD3DC000000000000, 0xD21E000000000000
+    .dword 0xC560000000000000, 0xC4A2000000000000, 0xC6E4000000000000, 0xC726000000000000
+    .dword 0xC268000000000000, 0xC3AA000000000000, 0xC1EC000000000000, 0xC02E000000000000
+    .dword 0xCB70000000000000, 0xCAB2000000000000, 0xC8F4000000000000, 0xC936000000000000
+    .dword 0xCC78000000000000, 0xCDBA000000000000, 0xCFFC000000000000, 0xCE3E000000000000
+    .dword 0x9180000000000000, 0x9042000000000000, 0x9204000000000000, 0x93C6000000000000
+    .dword 0x9688000000000000, 0x974A000000000000, 0x950C000000000000, 0x94CE000000000000
+    .dword 0x9F90000000000000, 0x9E52000000000000, 0x9C14000000000000, 0x9DD6000000000000
+    .dword 0x9898000000000000, 0x995A000000000000, 0x9B1C000000000000, 0x9ADE000000000000
+    .dword 0x8DA0000000000000, 0x8C62000000000000, 0x8E24000000000000, 0x8FE6000000000000
+    .dword 0x8AA8000000000000, 0x8B6A000000000000, 0x892C000000000000, 0x88EE000000000000
+    .dword 0x83B0000000000000, 0x8272000000000000, 0x8034000000000000, 0x81F6000000000000
+    .dword 0x84B8000000000000, 0x857A000000000000, 0x873C000000000000, 0x86FE000000000000
+    .dword 0xA9C0000000000000, 0xA802000000000000, 0xAA44000000000000, 0xAB86000000000000
+    .dword 0xAEC8000000000000, 0xAF0A000000000000, 0xAD4C000000000000, 0xAC8E000000000000
+    .dword 0xA7D0000000000000, 0xA612000000000000, 0xA454000000000000, 0xA596000000000000
+    .dword 0xA0D8000000000000, 0xA11A000000000000, 0xA35C000000000000, 0xA29E000000000000
+    .dword 0xB5E0000000000000, 0xB422000000000000, 0xB664000000000000, 0xB7A6000000000000
+    .dword 0xB2E8000000000000, 0xB32A000000000000, 0xB16C000000000000, 0xB0AE000000000000
+    .dword 0xBBF0000000000000, 0xBA32000000000000, 0xB874000000000000, 0xB9B6000000000000
+    .dword 0xBCF8000000000000, 0xBD3A000000000000, 0xBF7C000000000000, 0xBEBE000000000000
+
 .text
 
 # Local copy of _vpaes_preheat for this compilation unit.
@@ -209,6 +271,57 @@ _vpaes_preheat:
     vld       $vr15,$a6,0x50
     vld       $vr14,$a6,0x60
     vldi      $vr18,0
+    jirl      $zero,$ra,0
+
+# LASX preheat: load 256-bit (duplicated) constants + Lk_ipt/Lk_sbo + MC tables
+.align 4
+_vpaes_lasx_preheat_gcm:
+    la.local  $a6,Lk_s0F
+    vld       $vr10,$a6,-0x20
+    xvreplve0.q $xr10,$xr10
+    vld       $vr11,$a6,-0x10
+    xvreplve0.q $xr11,$xr11
+    vld       $vr9,$a6,0
+    xvreplve0.q $xr9,$xr9
+    vld       $vr13,$a6,0x30
+    xvreplve0.q $xr13,$xr13
+    vld       $vr12,$a6,0x40
+    xvreplve0.q $xr12,$xr12
+    vld       $vr15,$a6,0x50
+    xvreplve0.q $xr15,$xr15
+    vld       $vr14,$a6,0x60
+    xvreplve0.q $xr14,$xr14
+    xvldi     $xr18,0
+    la.local  $r16,Lk_ipt
+    vld       $vr27,$r16,0
+    xvreplve0.q $xr27,$xr27
+    vld       $vr28,$r16,16
+    xvreplve0.q $xr28,$xr28
+    la.local  $r16,Lk_sbo
+    vld       $vr29,$r16,0
+    xvreplve0.q $xr29,$xr29
+    vld       $vr30,$r16,16
+    xvreplve0.q $xr30,$xr30
+    # Preload MC forward[0..3] into xvr16,17,19,20
+    la.local  $r16,Lk_mc_forward
+    vld       $vr16,$r16,0
+    xvreplve0.q $xr16,$xr16
+    vld       $vr17,$r16,16
+    xvreplve0.q $xr17,$xr17
+    vld       $vr19,$r16,32
+    xvreplve0.q $xr19,$xr19
+    vld       $vr20,$r16,48
+    xvreplve0.q $xr20,$xr20
+    # Preload MC backward[0..3] into xvr21,22,23,24
+    la.local  $r16,Lk_mc_backward
+    vld       $vr21,$r16,0
+    xvreplve0.q $xr21,$xr21
+    vld       $vr22,$r16,16
+    xvreplve0.q $xr22,$xr22
+    vld       $vr23,$r16,32
+    xvreplve0.q $xr23,$xr23
+    vld       $vr24,$r16,48
+    xvreplve0.q $xr24,$xr24
     jirl      $zero,$ra,0
 
 .globl  loongarch64_vpaes_gcm_encrypt
@@ -243,9 +356,9 @@ loongarch64_vpaes_gcm_encrypt:
     st.d    $a1,$sp,824
     st.d    $a4,$sp,840
 
-    ori     $t3,$s0,0           # remaining aligned bytes
+    st.d    $s0,$sp,856         # save aligned_len for return
 
-    la.local $s2,.Lrem_8bit
+    la.local $s2,.Lrem_8bit_shl48
     addi.d  $s3,$fp,32          # Htable base
     ori     $s4,$sp,0           # H shl4 bytes
     addi.d  $s5,$sp,16          # H shr4 table
@@ -277,11 +390,12 @@ loongarch64_vpaes_gcm_encrypt:
     bnez    $r20,.Lprep_h_528
 
     # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # H.u[0..1] at $fp+16 are already BSWAP'd by CRYPTO_gcm128_init.
+    # Feed them directly (without revb) so the byte-by-byte multiply
+    # processes byte[15]→byte[0], matching gcm_ghash_4bit's order.
     la.local $t7,.Lrem_4bit
-    ld.d    $r6,$sp,800
-    ld.d    $r7,$sp,808
-    revb.d  $r6,$r6
-    revb.d  $r7,$r7
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
 
     andi    $r14,$r7,0x0f
     andi    $r15,$r7,0xf0
@@ -503,9 +617,7 @@ loongarch64_vpaes_gcm_encrypt:
     addi.d  $r20,$r20,-1
     bnez    $r20,.Lprep_h2_528
 
-    # Load Xi state and counter, save counter to stack.
-    ld.d    $r4,$fp,0
-    ld.d    $r5,$fp,8
+    # Load counter, save counter to stack.
     ld.d    $r16,$sp,840
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
@@ -520,7 +632,19 @@ loongarch64_vpaes_gcm_encrypt:
     la.local $r16,Lk_mc_backward
     st.d    $r16,$sp,832
 
-    # ─── warmup: encrypt pair 0 (loop-based, no GHASH) ──────────────
+    # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
+    la.local $r16,Lk_ipt
+    vld     $vr27,$r16,0
+    vld     $vr28,$r16,16
+    la.local $r16,Lk_sbo
+    vld     $vr29,$r16,0
+    vld     $vr30,$r16,16
+
+    # Load Xi state (must be after preheat which clobbers $r4/$r5).
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── warmup: encrypt pair 0 (unrolled, no GHASH) ──────────────
     ld.w        $r16,$sp,848
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
@@ -529,13 +653,7 @@ loongarch64_vpaes_gcm_encrypt:
     revb.2w     $r16,$r16
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r16,3
-    move      $a5,$s1
-    li.d      $a7,0x10
-    ld.w      $t5,$s1,240
-    la.local  $t0,Lk_ipt
-    vld       $vr25,$t0,0
-    vld       $vr26,$t0,16
-    vld       $vr5,$a5,0
+    vld       $vr5,$s1,0
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
     vandn.v   $vr1,$vr1,$vr0
@@ -544,69 +662,24 @@ loongarch64_vpaes_gcm_encrypt:
     vsrli.w   $vr20,$vr20,4
     vand.v    $vr0,$vr0,$vr9
     vand.v    $vr19,$vr19,$vr9
-    vshuf.b   $vr2,$vr18,$vr25,$vr0
-    vshuf.b   $vr21,$vr18,$vr25,$vr19
-    vshuf.b   $vr0,$vr18,$vr26,$vr1
-    vshuf.b   $vr19,$vr18,$vr26,$vr20
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
     vxor.v    $vr2,$vr2,$vr5
     vxor.v    $vr21,$vr21,$vr5
-    addi.d    $a5,$a5,16
     vxor.v    $vr0,$vr0,$vr2
     vxor.v    $vr19,$vr19,$vr21
-    la.local  $a6,Lk_mc_backward
-    b         .Lwarm_entry
-
-.Lwarm_loop:
-    # SubBytes + MixColumns (standard VPAES x2 loop body)
-    vld       $vr5,$a5,0
-    vxor.v    $vr3,$vr3,$vr1
-    vxor.v    $vr22,$vr22,$vr20
-    vori.b    $vr4,$vr13,0
-    vori.b    $vr23,$vr13,0
-    vori.b    $vr0,$vr12,0
-    vori.b    $vr19,$vr12,0
-    vshuf.b   $vr4,$vr18,$vr4,$vr2
-    vshuf.b   $vr23,$vr18,$vr23,$vr21
-    vshuf.b   $vr0,$vr18,$vr0,$vr3
-    vshuf.b   $vr19,$vr18,$vr19,$vr22
-    vxor.v    $vr4,$vr4,$vr5
-    vxor.v    $vr23,$vr23,$vr5
-    vxor.v    $vr0,$vr0,$vr4
-    vxor.v    $vr19,$vr19,$vr23
-    add.d     $t0,$a7,$a6
-    vld       $vr1,$t0,-0x40
-    vori.b    $vr5,$vr15,0
-    vld       $vr4,$t0,0
-    vshuf.b   $vr5,$vr18,$vr5,$vr2
-    vori.b    $vr24,$vr15,0
-    vshuf.b   $vr24,$vr18,$vr24,$vr21
-    vori.b    $vr2,$vr14,0
-    vori.b    $vr21,$vr14,0
-    vshuf.b   $vr2,$vr18,$vr2,$vr3
-    vshuf.b   $vr21,$vr18,$vr21,$vr22
-    vori.b    $vr3,$vr0,0
-    vori.b    $vr22,$vr19,0
-    vxor.v    $vr2,$vr5,$vr2
-    vxor.v    $vr21,$vr24,$vr21
-    vshuf.b   $vr0,$vr18,$vr0,$vr1
-    vshuf.b   $vr19,$vr18,$vr19,$vr1
-    addi.d    $a5,$a5,16
-    vxor.v    $vr0,$vr0,$vr2
-    vxor.v    $vr19,$vr19,$vr21
-    vshuf.b   $vr3,$vr18,$vr3,$vr4
-    vshuf.b   $vr22,$vr18,$vr22,$vr4
-    addi.d    $a7,$a7,16
-    vxor.v    $vr3,$vr3,$vr0
-    vxor.v    $vr22,$vr22,$vr19
-    vshuf.b   $vr0,$vr18,$vr0,$vr1
-    vshuf.b   $vr19,$vr18,$vr19,$vr1
-    andi      $a7,$a7,0x30
-    addi.d    $t5,$t5,-1
-    vxor.v    $vr0,$vr0,$vr3
-    vxor.v    $vr19,$vr19,$vr22
-
-.Lwarm_entry:
-    # nibble split (top_a + top_b + top_c + entry tail)
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lwarm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lwarm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lwarm_256
+    b           .Lgcm_enc_done
+.Lwarm_128:
+    # ── warmup round 1  half-front (rk+16) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
     vori.b    $vr5,$vr11,0
@@ -643,26 +716,2770 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr21,$vr21,$vr19
     vshuf.b   $vr3,$vr18,$vr3,$vr4
     vshuf.b   $vr22,$vr18,$vr22,$vr23
-    vld       $vr5,$a5,0
     vxor.v    $vr3,$vr3,$vr1
     vxor.v    $vr22,$vr22,$vr20
-    bnez      $t5,.Lwarm_loop
-
-    # warmup last round (sbo SubBytes + ShiftRows, no MixColumns)
-    vld       $vr25,$a6,-0x60
-    vld       $vr26,$a6,-0x50
-    vshuf.b   $vr4,$vr18,$vr25,$vr2
-    vshuf.b   $vr23,$vr18,$vr25,$vr21
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
     vxor.v    $vr4,$vr4,$vr5
     vxor.v    $vr23,$vr23,$vr5
-    vshuf.b   $vr0,$vr18,$vr26,$vr3
-    vshuf.b   $vr19,$vr18,$vr26,$vr22
-    add.d     $t0,$a7,$a6
-    vld       $vr1,$t0,0x40
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+160, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
+    b           .Lwarm_after
+.Lwarm_192:
+    # ── warmup round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+192, sr_off=64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,64
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    b           .Lwarm_after
+.Lwarm_256:
+    # ── warmup round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 12  half-front (rk+192) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 12  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 13  half-front (rk+208) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,208
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 13  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+224, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,224
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+.Lwarm_after:
 
     # ── warmup after-body: xor-store, seed GHASH, INIT2, advance ──
     ld.d        $r16,$sp,816
@@ -693,21 +3510,33 @@ loongarch64_vpaes_gcm_encrypt:
     st.w        $r16,$sp,848
     revb.2w     $r17,$r16
     vinsgr2vr.w $vr8,$r17,3
-    addi.d      $t3,$t3,-32
-    b           .Lgcm_drain      # DEBUG: always drain after warmup
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_drain
 
-    # ─── steady-state dispatcher ────────────────────────────────────
+    # ─── key-size dispatch (once, outside loop) ─────────────────────
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_loop_256
+    b           .Lgcm_enc_done
+
+    # ── AES-128 self-contained loop ────────────────────────────────
+.Lgcm_loop_128:
     ld.w        $r16,$sp,848
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
-    addi.w      $r16,$r16,1
-    revb.2w     $r16,$r16
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
     vori.b      $vr19,$vr8,0
-    vinsgr2vr.w $vr19,$r16,3
-    la.local  $r16,Lk_ipt
-    vld       $vr25,$r16,0
-    vld       $vr26,$r16,16
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -717,27 +3546,14 @@ loongarch64_vpaes_gcm_encrypt:
     vsrli.w   $vr20,$vr20,4
     vand.v    $vr0,$vr0,$vr9
     vand.v    $vr19,$vr19,$vr9
-    vshuf.b   $vr2,$vr18,$vr25,$vr0
-    vshuf.b   $vr21,$vr18,$vr25,$vr19
-    vshuf.b   $vr0,$vr18,$vr26,$vr1
-    vshuf.b   $vr19,$vr18,$vr26,$vr20
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
     vxor.v    $vr2,$vr2,$vr5
     vxor.v    $vr21,$vr21,$vr5
     vxor.v    $vr0,$vr0,$vr2
     vxor.v    $vr19,$vr19,$vr21
-
-.Lgcm_steady:
-    ld.w        $r16,$s1,240
-    ori         $r17,$zero,9
-    beq         $r16,$r17,.Lgcm_steady_128
-    ori         $r17,$zero,11
-    beq         $r16,$r17,.Lgcm_steady_192
-    ori         $r17,$zero,13
-    beq         $r16,$r17,.Lgcm_steady_256
-    b           .Lgcm_enc_done
-
-    # ── AES-128 ────────────────────────────────────────────────────
-.Lgcm_steady_128:
     # ── round 1  half-front (rk+16) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -962,9 +3778,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 3  half-back  (mc_idx=3) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-16
@@ -993,7 +3806,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 6 (LO)
+    # GHASH step 5 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 4  half-front (rk+64) ──
@@ -1048,7 +3861,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 7 (LO)
+    # GHASH step 6 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 4  half-back  (mc_idx=0) ──
@@ -1079,9 +3892,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 8 (HI)
+    # GHASH step 7 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1134,7 +3947,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 9 (HI)
+    # GHASH step 8 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 5  half-back  (mc_idx=1) ──
@@ -1165,7 +3978,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 10 (HI)
+    # GHASH step 9 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 6  half-front (rk+96) ──
@@ -1220,7 +4033,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 11 (HI)
+    # GHASH step 10 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 6  half-back  (mc_idx=2) ──
@@ -1251,7 +4064,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 12 (HI)
+    # GHASH step 11 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 7  half-front (rk+112) ──
@@ -1306,7 +4119,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 13 (HI)
+    # GHASH step 12 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 7  half-back  (mc_idx=3) ──
@@ -1337,9 +4150,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 8  half-front (rk+128) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1392,7 +4202,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 15 (HI)
+    # GHASH step 13 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 8  half-back  (mc_idx=0) ──
@@ -1423,6 +4233,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1475,6 +4288,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 9  half-back  (mc_idx=1) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-48
@@ -1543,25 +4359,81 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr3,$vr3,$vr1
     vxor.v    $vr22,$vr22,$vr20
     vld       $vr5,$s1,160
-    la.local  $r16,Lk_sbo
-    vld       $vr25,$r16,0
-    vld       $vr26,$r16,16
-    vshuf.b   $vr4,$vr18,$vr25,$vr2
-    vshuf.b   $vr23,$vr18,$vr25,$vr21
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
     vxor.v    $vr4,$vr4,$vr5
     vxor.v    $vr23,$vr23,$vr5
-    vshuf.b   $vr0,$vr18,$vr26,$vr3
-    vshuf.b   $vr19,$vr18,$vr26,$vr22
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    b           .Lgcm_steady_after
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_128
+    b           .Lgcm_drain
 
-    # ── AES-192 ────────────────────────────────────────────────────
-.Lgcm_steady_192:
+    # ── AES-192 self-contained loop ────────────────────────────────
+.Lgcm_loop_192:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
     # ── round 1  half-front (rk+16) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1700,9 +4572,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 2  half-back  (mc_idx=2) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-32
@@ -1731,7 +4600,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 4 (LO)
+    # GHASH step 3 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 3  half-front (rk+48) ──
@@ -1786,7 +4655,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 5 (LO)
+    # GHASH step 4 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 3  half-back  (mc_idx=3) ──
@@ -1817,9 +4686,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 4  half-front (rk+64) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1872,7 +4738,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 7 (LO)
+    # GHASH step 5 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 4  half-back  (mc_idx=0) ──
@@ -1903,9 +4769,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 8 (HI)
+    # GHASH step 6 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -1958,9 +4824,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 9 (HI)
+    # GHASH step 7 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 5  half-back  (mc_idx=1) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-48
@@ -1989,9 +4855,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 6  half-front (rk+96) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2044,7 +4907,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 11 (HI)
+    # GHASH step 8 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 6  half-back  (mc_idx=2) ──
@@ -2075,7 +4938,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 12 (HI)
+    # GHASH step 9 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 7  half-front (rk+112) ──
@@ -2130,9 +4993,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 7  half-back  (mc_idx=3) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-16
@@ -2161,7 +5021,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 14 (HI)
+    # GHASH step 10 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 8  half-front (rk+128) ──
@@ -2216,7 +5076,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 15 (HI)
+    # GHASH step 11 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 8  half-back  (mc_idx=0) ──
@@ -2247,6 +5107,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2327,6 +5190,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2379,6 +5245,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 10  half-back  (mc_idx=2) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-32
@@ -2459,6 +5328,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 11  half-back  (mc_idx=3) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-16
@@ -2527,25 +5399,81 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr3,$vr3,$vr1
     vxor.v    $vr22,$vr22,$vr20
     vld       $vr5,$s1,192
-    la.local  $r16,Lk_sbo
-    vld       $vr25,$r16,0
-    vld       $vr26,$r16,16
-    vshuf.b   $vr4,$vr18,$vr25,$vr2
-    vshuf.b   $vr23,$vr18,$vr25,$vr21
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
     vxor.v    $vr4,$vr4,$vr5
     vxor.v    $vr23,$vr23,$vr5
-    vshuf.b   $vr0,$vr18,$vr26,$vr3
-    vshuf.b   $vr19,$vr18,$vr26,$vr22
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,64
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    b           .Lgcm_steady_after
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_192
+    b           .Lgcm_drain
 
-    # ── AES-256 ────────────────────────────────────────────────────
-.Lgcm_steady_256:
+    # ── AES-256 self-contained loop ────────────────────────────────
+.Lgcm_loop_256:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
     # ── round 1  half-front (rk+16) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2629,9 +5557,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 2  half-front (rk+32) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2684,7 +5609,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 3 (LO)
+    # GHASH step 2 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 2  half-back  (mc_idx=2) ──
@@ -2715,7 +5640,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 4 (LO)
+    # GHASH step 3 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 3  half-front (rk+48) ──
@@ -2770,9 +5695,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 3  half-back  (mc_idx=3) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-16
@@ -2801,7 +5723,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 6 (LO)
+    # GHASH step 4 (LO)
     GHASH528_PRE2
     GHASH528_POST2_LO
     # ── round 4  half-front (rk+64) ──
@@ -2856,9 +5778,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
     # ── round 4  half-back  (mc_idx=0) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-64
@@ -2887,9 +5806,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 8 (HI)
+    # GHASH step 5 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -2942,9 +5861,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 9 (HI)
+    # GHASH step 6 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 5  half-back  (mc_idx=1) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-48
@@ -2973,9 +5892,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 6  half-front (rk+96) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3028,9 +5944,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 11 (HI)
+    # GHASH step 7 (LO)
     GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH528_POST2_LO
     # ── round 6  half-back  (mc_idx=2) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-32
@@ -3059,9 +5975,6 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 7  half-front (rk+112) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3114,7 +6027,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 13 (HI)
+    # GHASH step 8 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 7  half-back  (mc_idx=3) ──
@@ -3145,7 +6058,7 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
-    # GHASH step 14 (HI)
+    # GHASH step 9 (HI)
     GHASH528_PRE2
     GHASH528_POST2_HI
     # ── round 8  half-front (rk+128) ──
@@ -3200,9 +6113,6 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
-    # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
     # ── round 8  half-back  (mc_idx=0) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-64
@@ -3231,6 +6141,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3311,6 +6224,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3363,6 +6279,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 10  half-back  (mc_idx=2) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-32
@@ -3443,6 +6362,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 11  half-back  (mc_idx=3) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-16
@@ -3523,6 +6445,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 12  half-back  (mc_idx=0) ──
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,-64
@@ -3551,6 +6476,9 @@ loongarch64_vpaes_gcm_encrypt:
     vshuf.b   $vr19,$vr18,$vr19,$vr1
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
     # ── round 13  half-front (rk+208) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3671,31 +6599,23 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr3,$vr3,$vr1
     vxor.v    $vr22,$vr22,$vr20
     vld       $vr5,$s1,224
-    la.local  $r16,Lk_sbo
-    vld       $vr25,$r16,0
-    vld       $vr26,$r16,16
-    vshuf.b   $vr4,$vr18,$vr25,$vr2
-    vshuf.b   $vr23,$vr18,$vr25,$vr21
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
     vxor.v    $vr4,$vr4,$vr5
     vxor.v    $vr23,$vr23,$vr5
-    vshuf.b   $vr0,$vr18,$vr26,$vr3
-    vshuf.b   $vr19,$vr18,$vr26,$vr22
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
     ld.d      $r16,$sp,832
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-
-    # ── after-body: FINAL2, combine, xor-store, seed, INIT2, loop ─
-.Lgcm_steady_after:
     GHASH528_FINAL2
-    revb.d      $r8,$r8
-    revb.d      $r9,$r9
-    revb.d      $r13,$r13
-    revb.d      $r14,$r14
-    xor         $r4,$r8,$r13
-    xor         $r5,$r9,$r14
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
     ld.d        $r16,$sp,816
     ld.d        $r17,$sp,824
     vld         $vr6,$r16,0
@@ -3719,42 +6639,9 @@ loongarch64_vpaes_gcm_encrypt:
     revb.d      $r11,$r11
     revb.d      $r12,$r12
     GHASH528_INIT2
-    ld.w        $r16,$sp,848
-    addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
-    revb.2w     $r17,$r16
-    vinsgr2vr.w $vr8,$r17,3
-    addi.d      $t3,$t3,-32
-    beqz        $t3,.Lgcm_drain
-    ld.w        $r16,$sp,848
-    revb.2w     $r17,$r16
-    vori.b      $vr0,$vr8,0
-    vinsgr2vr.w $vr0,$r17,3
-    addi.w      $r16,$r16,1
-    revb.2w     $r16,$r16
-    vori.b      $vr19,$vr8,0
-    vinsgr2vr.w $vr19,$r16,3
-    la.local  $r16,Lk_ipt
-    vld       $vr25,$r16,0
-    vld       $vr26,$r16,16
-    vld       $vr5,$s1,0
-    vori.b    $vr1,$vr9,0
-    vori.b    $vr20,$vr9,0
-    vandn.v   $vr1,$vr1,$vr0
-    vandn.v   $vr20,$vr20,$vr19
-    vsrli.w   $vr1,$vr1,4
-    vsrli.w   $vr20,$vr20,4
-    vand.v    $vr0,$vr0,$vr9
-    vand.v    $vr19,$vr19,$vr9
-    vshuf.b   $vr2,$vr18,$vr25,$vr0
-    vshuf.b   $vr21,$vr18,$vr25,$vr19
-    vshuf.b   $vr0,$vr18,$vr26,$vr1
-    vshuf.b   $vr19,$vr18,$vr26,$vr20
-    vxor.v    $vr2,$vr2,$vr5
-    vxor.v    $vr21,$vr21,$vr5
-    vxor.v    $vr0,$vr0,$vr2
-    vxor.v    $vr19,$vr19,$vr21
-    b           .Lgcm_steady
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_loop_256
+    b           .Lgcm_drain
 
     # ─── drain: finish last GHASH (non-interleaved) ─────────────────
 .Lgcm_drain:
@@ -3767,12 +6654,10 @@ loongarch64_vpaes_gcm_encrypt:
     GHASH528_POST2_HI
     .endr
     GHASH528_FINAL2
-    revb.d      $r8,$r8
-    revb.d      $r9,$r9
-    revb.d      $r13,$r13
-    revb.d      $r14,$r14
-    xor         $r4,$r8,$r13
-    xor         $r5,$r9,$r14
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
     st.d        $r4,$fp,0
     st.d        $r5,$fp,8
     # Write counter back to ivec.
@@ -3783,7 +6668,7 @@ loongarch64_vpaes_gcm_encrypt:
     vst     $vr8,$r16,0
 
 .Lgcm_enc_done:
-    ori     $a0,$s0,0
+    ld.d    $a0,$sp,856         # return aligned_len
 
 .Lgcm_epilogue:
     ld.d    $ra,$sp,952
@@ -3805,4 +6690,12023 @@ loongarch64_vpaes_gcm_encrypt:
     jirl    $zero,$ra,0
 .cfi_endproc
 .size   loongarch64_vpaes_gcm_encrypt,.-loongarch64_vpaes_gcm_encrypt
+
+.globl  loongarch64_vpaes_gcm_decrypt
+.type   loongarch64_vpaes_gcm_decrypt,@function
+.align  4
+loongarch64_vpaes_gcm_decrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_dec_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0           # Xi*
+    ori     $s1,$a3,0           # AES key schedule
+    # aligned_len = len & -32
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_dec_done
+
+    # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+
+    st.d    $s0,$sp,856         # save aligned_len for return
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32          # Htable base
+    ori     $s4,$sp,0           # H shl4 bytes
+    addi.d  $s5,$sp,16          # H shr4 table
+    addi.d  $s6,$sp,272         # H^2 4-bit table
+    addi.d  $s7,$sp,528         # H^2 shl4 bytes
+    addi.d  $s8,$sp,544         # H^2 shr4 table
+
+    # Build H 528B helpers (decrypt).
+    ori     $r14,$s3,0
+    ori     $r15,$s5,0
+    ori     $r16,$s4,0
+    li.d    $r20,16
+.Ldec_prep_h_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_prep_h_528
+
+    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Ldec_gcm_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_gcm_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Ldec_gcm_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_gcm_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    # Expand raw H^2 into the 16-entry 4-bit table layout.
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+    # Build H^2 528B helpers (decrypt).
+    ori     $r14,$s6,0
+    ori     $r15,$s8,0
+    ori     $r16,$s7,0
+    li.d    $r20,16
+.Ldec_prep_h2_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Ldec_prep_h2_528
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # Preheat VPAES constants.
+    ori     $a2,$s1,0
+    bl      _vpaes_preheat
+
+    # Save MC table base for unrolled steady state.
+    la.local $r16,Lk_mc_backward
+    st.d    $r16,$sp,832
+
+    # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
+    la.local $r16,Lk_ipt
+    vld     $vr27,$r16,0
+    vld     $vr28,$r16,16
+    la.local $r16,Lk_sbo
+    vld     $vr29,$r16,0
+    vld     $vr30,$r16,16
+
+    # Load Xi state (must be after preheat which clobbers $r4/$r5).
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── warmup: decrypt pair 0 (unrolled, no GHASH) ──────────────
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r16,$r16,1
+    revb.2w     $r16,$r16
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Ldec_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Ldec_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Ldec_warm_256
+    b           .Lgcm_dec_done
+.Ldec_warm_128:
+    # ── warmup round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+160, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    b           .Ldec_warm_after
+.Ldec_warm_192:
+    # ── warmup round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+192, sr_off=64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,64
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    b           .Ldec_warm_after
+.Ldec_warm_256:
+    # ── warmup round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 12  half-front (rk+192) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 12  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup round 13  half-front (rk+208) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,208
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── warmup round 13  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── warmup final round (rk+224, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,224
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+.Ldec_warm_after:
+
+    # ── warmup after-body: xor-store+seed (decrypt), INIT2, advance ──
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    # Seed GHASH from ciphertext (input, before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream to produce plaintext
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    # Store plaintext output
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    ld.w        $r16,$sp,848
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vinsgr2vr.w $vr8,$r17,3
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_dec_drain
+
+    # ─── key-size dispatch (once, outside loop) ─────────────────────
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_dec_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_dec_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_dec_loop_256
+    b           .Lgcm_dec_done
+
+    # ── AES-128 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_128:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    # ── round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── final round (rk+160, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    # Seed GHASH from ciphertext (input, before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream to produce plaintext
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    # Store plaintext output
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_128
+    b           .Lgcm_dec_drain
+
+    # ── AES-192 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_192:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    # ── round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── final round (rk+192, sr_off=64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,64
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    # Seed GHASH from ciphertext (input, before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream to produce plaintext
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    # Store plaintext output
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_192
+    b           .Lgcm_dec_drain
+
+    # ── AES-256 decrypt self-contained loop ────────────────────────
+.Lgcm_dec_loop_256:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr19,$vr8,0
+    vinsgr2vr.w $vr19,$r17,3
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr5,$s1,0
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr2,$vr18,$vr27,$vr0
+    vshuf.b   $vr21,$vr18,$vr27,$vr19
+    vshuf.b   $vr0,$vr18,$vr28,$vr1
+    vshuf.b   $vr19,$vr18,$vr28,$vr20
+    vxor.v    $vr2,$vr2,$vr5
+    vxor.v    $vr21,$vr21,$vr5
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    # ── round 1  half-front (rk+16) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,16
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 1  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 2  half-front (rk+32) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,32
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 2  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 3  half-front (rk+48) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,48
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 3  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 4  half-front (rk+64) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,64
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 4  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 5  half-front (rk+80) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,80
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 5  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 6  half-front (rk+96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,96
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── round 6  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 7  half-front (rk+112) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,112
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 7  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 8  half-front (rk+128) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,128
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 8  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 9  half-front (rk+144) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,144
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 9  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 10  half-front (rk+160) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,160
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 10  half-back  (mc_idx=2) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-32
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,32
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 11  half-front (rk+176) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,176
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 11  half-back  (mc_idx=3) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-16
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,48
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── round 12  half-front (rk+192) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,192
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 12  half-back  (mc_idx=0) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-64
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,0
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── round 13  half-front (rk+208) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,208
+    vori.b    $vr4,$vr13,0
+    vori.b    $vr23,$vr13,0
+    vori.b    $vr0,$vr12,0
+    vori.b    $vr19,$vr12,0
+    vshuf.b   $vr4,$vr18,$vr4,$vr2
+    vshuf.b   $vr23,$vr18,$vr23,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr3
+    vshuf.b   $vr19,$vr18,$vr19,$vr22
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    # ── round 13  half-back  (mc_idx=1) ──
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,-48
+    vori.b    $vr5,$vr15,0
+    vld       $vr4,$r16,16
+    vshuf.b   $vr5,$vr18,$vr5,$vr2
+    vori.b    $vr24,$vr15,0
+    vshuf.b   $vr24,$vr18,$vr24,$vr21
+    vori.b    $vr2,$vr14,0
+    vori.b    $vr21,$vr14,0
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr0,0
+    vori.b    $vr22,$vr19,0
+    vxor.v    $vr2,$vr5,$vr2
+    vxor.v    $vr21,$vr24,$vr21
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr2
+    vxor.v    $vr19,$vr19,$vr21
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr4
+    vxor.v    $vr3,$vr3,$vr0
+    vxor.v    $vr22,$vr22,$vr19
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    vxor.v    $vr0,$vr0,$vr3
+    vxor.v    $vr19,$vr19,$vr22
+    # ── final round (rk+224, sr_off=96) ──
+    vori.b    $vr1,$vr9,0
+    vori.b    $vr20,$vr9,0
+    vori.b    $vr5,$vr11,0
+    vori.b    $vr24,$vr11,0
+    vandn.v   $vr1,$vr1,$vr0
+    vandn.v   $vr20,$vr20,$vr19
+    vsrli.w   $vr1,$vr1,4
+    vsrli.w   $vr20,$vr20,4
+    vand.v    $vr0,$vr0,$vr9
+    vand.v    $vr19,$vr19,$vr9
+    vshuf.b   $vr5,$vr18,$vr5,$vr0
+    vshuf.b   $vr24,$vr18,$vr24,$vr19
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr0,$vr0,$vr1
+    vxor.v    $vr19,$vr19,$vr20
+    vshuf.b   $vr3,$vr18,$vr3,$vr1
+    vshuf.b   $vr22,$vr18,$vr22,$vr20
+    vori.b    $vr4,$vr10,0
+    vori.b    $vr23,$vr10,0
+    vxor.v    $vr3,$vr3,$vr5
+    vxor.v    $vr22,$vr22,$vr24
+    vshuf.b   $vr4,$vr18,$vr4,$vr0
+    vshuf.b   $vr23,$vr18,$vr23,$vr19
+    vori.b    $vr2,$vr10,0
+    vori.b    $vr21,$vr10,0
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr24
+    vshuf.b   $vr2,$vr18,$vr2,$vr3
+    vshuf.b   $vr21,$vr18,$vr21,$vr22
+    vori.b    $vr3,$vr10,0
+    vori.b    $vr22,$vr10,0
+    vxor.v    $vr2,$vr2,$vr0
+    vxor.v    $vr21,$vr21,$vr19
+    vshuf.b   $vr3,$vr18,$vr3,$vr4
+    vshuf.b   $vr22,$vr18,$vr22,$vr23
+    vxor.v    $vr3,$vr3,$vr1
+    vxor.v    $vr22,$vr22,$vr20
+    vld       $vr5,$s1,224
+    vshuf.b   $vr4,$vr18,$vr29,$vr2
+    vshuf.b   $vr23,$vr18,$vr29,$vr21
+    vxor.v    $vr4,$vr4,$vr5
+    vxor.v    $vr23,$vr23,$vr5
+    vshuf.b   $vr0,$vr18,$vr30,$vr3
+    vshuf.b   $vr19,$vr18,$vr30,$vr22
+    ld.d      $r16,$sp,832
+    vld       $vr1,$r16,96
+    vxor.v    $vr0,$vr0,$vr4
+    vxor.v    $vr19,$vr19,$vr23
+    vshuf.b   $vr0,$vr18,$vr0,$vr1
+    vshuf.b   $vr19,$vr18,$vr19,$vr1
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    vld         $vr6,$r16,0
+    vld         $vr7,$r16,16
+    # Seed GHASH from ciphertext (input, before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream to produce plaintext
+    vxor.v      $vr6,$vr6,$vr0
+    vxor.v      $vr7,$vr7,$vr19
+    # Store plaintext output
+    vst         $vr6,$r17,0
+    vst         $vr7,$r17,16
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_dec_loop_256
+    b           .Lgcm_dec_drain
+
+    # ─── drain: finish last GHASH (non-interleaved) ─────────────────
+.Lgcm_dec_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    st.d        $r4,$fp,0
+    st.d        $r5,$fp,8
+    # Write counter back to ivec.
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_dec_done:
+    ld.d    $a0,$sp,856         # return aligned_len
+
+.Lgcm_dec_epilogue:
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_dec_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_gcm_decrypt,.-loongarch64_vpaes_gcm_decrypt
+
+.globl  loongarch64_vpaes_lasx_gcm_encrypt
+.type   loongarch64_vpaes_lasx_gcm_encrypt,@function
+.align  4
+loongarch64_vpaes_lasx_gcm_encrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_lasx_enc_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0
+    ori     $s1,$a3,0
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_lasx_enc_done
+
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+    st.d    $s0,$sp,856
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32
+    ori     $s4,$sp,0
+    addi.d  $s5,$sp,16
+    addi.d  $s6,$sp,272
+    addi.d  $s7,$sp,528
+    addi.d  $s8,$sp,544
+
+    # Build H 528B helpers (LASX enc).
+    ori     $r14,$s3,0
+    ori     $r15,$s5,0
+    ori     $r16,$s4,0
+    li.d    $r20,16
+.Llasx_enc_prep_h_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Llasx_enc_prep_h_528
+
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Lgcm_lasx_enc_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_enc_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Lgcm_lasx_enc_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_enc_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+    # Build H^2 528B helpers (LASX enc).
+    ori     $r14,$s6,0
+    ori     $r15,$s8,0
+    ori     $r16,$s7,0
+    li.d    $r20,16
+.Llasx_enc_prep_h2_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Llasx_enc_prep_h2_528
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # LASX preheat (constants + Lk_ipt/Lk_sbo + MC tables).
+    bl      _vpaes_lasx_preheat_gcm
+
+    # Load Xi state.
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── LASX warmup: encrypt pair 0 (no GHASH) ──────────────────
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Llasx_enc_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Llasx_enc_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Llasx_enc_warm_256
+    b           .Lgcm_lasx_enc_done
+.Llasx_enc_warm_128:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,32
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,160
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+160, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    b           .Llasx_enc_warm_after
+.Llasx_enc_warm_192:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,0
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,192
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+192, sr_off=64) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    b           .Llasx_enc_warm_after
+.Llasx_enc_warm_256:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,32
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,224
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 12  half-front (rk+192) ──
+    vld       $vr26,$s1,192
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 12  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 13  half-front (rk+208) ──
+    vld       $vr26,$s1,208
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 13  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+224, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+.Llasx_enc_warm_after:
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    ld.w        $r16,$sp,848
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vinsgr2vr.w $vr8,$r17,3
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_lasx_enc_drain
+
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_256
+    b           .Lgcm_lasx_enc_done
+
+.Lgcm_lasx_enc_loop_128:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+160, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_128
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_loop_192:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+192, sr_off=64) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_192
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_loop_256:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 12  half-front (rk+192) ──
+    vld       $vr26,$s1,192
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 12  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 13  half-front (rk+208) ──
+    vld       $vr26,$s1,208
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 13  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+224, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_256
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    st.d        $r4,$fp,0
+    st.d        $r5,$fp,8
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_lasx_enc_done:
+    ld.d    $a0,$sp,856
+
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_lasx_enc_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_lasx_gcm_encrypt,.-loongarch64_vpaes_lasx_gcm_encrypt
+
+.globl  loongarch64_vpaes_lasx_gcm_decrypt
+.type   loongarch64_vpaes_lasx_gcm_decrypt,@function
+.align  4
+loongarch64_vpaes_lasx_gcm_decrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_lasx_dec_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0
+    ori     $s1,$a3,0
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_lasx_dec_done
+
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+    st.d    $s0,$sp,856
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32
+    ori     $s4,$sp,0
+    addi.d  $s5,$sp,16
+    addi.d  $s6,$sp,272
+    addi.d  $s7,$sp,528
+    addi.d  $s8,$sp,544
+
+    # Build H 528B helpers (LASX dec).
+    ori     $r14,$s3,0
+    ori     $r15,$s5,0
+    ori     $r16,$s4,0
+    li.d    $r20,16
+.Llasx_dec_prep_h_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Llasx_dec_prep_h_528
+
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Lgcm_lasx_dec_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_dec_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Lgcm_lasx_dec_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_dec_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+    # Build H^2 528B helpers (LASX dec).
+    ori     $r14,$s6,0
+    ori     $r15,$s8,0
+    ori     $r16,$s7,0
+    li.d    $r20,16
+.Llasx_dec_prep_h2_528:
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    andi    $r19,$r18,0x0f
+    slli.d  $r19,$r19,4
+    st.b    $r19,$r16,0
+    slli.d  $r21,$r17,60
+    srli.d  $r18,$r18,4
+    or      $r18,$r18,$r21
+    srli.d  $r17,$r17,4
+    st.d    $r17,$r15,0
+    st.d    $r18,$r15,8
+    addi.d  $r14,$r14,16
+    addi.d  $r15,$r15,16
+    addi.d  $r16,$r16,1
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Llasx_dec_prep_h2_528
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # LASX preheat.
+    bl      _vpaes_lasx_preheat_gcm
+
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── LASX warmup: decrypt pair 0 (no GHASH) ──────────────────
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Llasx_dec_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Llasx_dec_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Llasx_dec_warm_256
+    b           .Lgcm_lasx_dec_done
+.Llasx_dec_warm_128:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,32
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,160
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+160, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    b           .Llasx_dec_warm_after
+.Llasx_dec_warm_192:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,0
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,192
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+192, sr_off=64) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    b           .Llasx_dec_warm_after
+.Llasx_dec_warm_256:
+    la.local    $r16,Lk_sr
+    vld         $vr25,$r16,32
+    xvreplve0.q $xr25,$xr25
+    vld         $vr31,$s1,224
+    xvreplve0.q $xr31,$xr31
+    # ── LASX warmup round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 12  half-front (rk+192) ──
+    vld       $vr26,$s1,192
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 12  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup round 13  half-front (rk+208) ──
+    vld       $vr26,$s1,208
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX warmup round 13  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX warmup final round (rk+224, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+.Llasx_dec_warm_after:
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    # Seed GHASH from ciphertext (before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream + store plaintext
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    ld.w        $r16,$sp,848
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vinsgr2vr.w $vr8,$r17,3
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_lasx_dec_drain
+
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_256
+    b           .Lgcm_lasx_dec_done
+
+.Lgcm_lasx_dec_loop_128:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+160, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    # Seed GHASH from ciphertext (before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream + store plaintext
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_128
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_loop_192:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+192, sr_off=64) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    # Seed GHASH from ciphertext (before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream + store plaintext
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_192
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_loop_256:
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+    # ── LASX round 1  half-front (rk+16) ──
+    vld       $vr26,$s1,16
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 1 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 1  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 2  half-front (rk+32) ──
+    vld       $vr26,$s1,32
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 2 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 2  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 3 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 3  half-front (rk+48) ──
+    vld       $vr26,$s1,48
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 3  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 4 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 4  half-front (rk+64) ──
+    vld       $vr26,$s1,64
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 4  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 5 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-front (rk+80) ──
+    vld       $vr26,$s1,80
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 6 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 5  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 6  half-front (rk+96) ──
+    vld       $vr26,$s1,96
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 7 (LO)
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    # ── LASX round 6  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 7  half-front (rk+112) ──
+    vld       $vr26,$s1,112
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 8 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 7  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 9 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 8  half-front (rk+128) ──
+    vld       $vr26,$s1,128
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 8  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 10 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 9  half-front (rk+144) ──
+    vld       $vr26,$s1,144
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 9  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 11 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-front (rk+160) ──
+    vld       $vr26,$s1,160
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 12 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 10  half-back  (mc_idx=2) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr23
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr19
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 11  half-front (rk+176) ──
+    vld       $vr26,$s1,176
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 13 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 11  half-back  (mc_idx=3) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr24
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr20
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX round 12  half-front (rk+192) ──
+    vld       $vr26,$s1,192
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # GHASH step 14 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 12  half-back  (mc_idx=0) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr21
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr16
+    xvxor.v   $xr0,$xr0,$xr3
+    # GHASH step 15 (HI)
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    # ── LASX round 13  half-front (rk+208) ──
+    vld       $vr26,$s1,208
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvreplve0.q $xr26,$xr26
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr13,$xr2
+    xvshuf.b  $xr0,$xr18,$xr12,$xr3
+    xvxor.v   $xr4,$xr4,$xr26
+    xvxor.v   $xr0,$xr0,$xr4
+    # ── LASX round 13  half-back  (mc_idx=1) ──
+    xvshuf.b  $xr5,$xr18,$xr15,$xr2
+    xvshuf.b  $xr2,$xr18,$xr14,$xr3
+    xvshuf.b  $xr3,$xr18,$xr0,$xr22
+    xvxor.v   $xr2,$xr5,$xr2
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr2
+    xvxor.v   $xr3,$xr3,$xr0
+    xvshuf.b  $xr0,$xr18,$xr0,$xr17
+    xvxor.v   $xr0,$xr0,$xr3
+    # ── LASX final round (rk+224, sr_off=96) ──
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+    xvshuf.b  $xr4,$xr18,$xr29,$xr2
+    xvshuf.b  $xr0,$xr18,$xr30,$xr3
+    xvxor.v   $xr4,$xr4,$xr31
+    xvxor.v   $xr0,$xr0,$xr4
+    xvshuf.b  $xr0,$xr18,$xr0,$xr25
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    # Seed GHASH from ciphertext (before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream + store plaintext
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_256
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+    xor         $r8,$r8,$r13
+    xor         $r9,$r9,$r14
+    revb.d      $r4,$r8
+    revb.d      $r5,$r9
+    st.d        $r4,$fp,0
+    st.d        $r5,$fp,8
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_lasx_dec_done:
+    ld.d    $a0,$sp,856
+
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_lasx_dec_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_lasx_gcm_decrypt,.-loongarch64_vpaes_lasx_gcm_decrypt
 

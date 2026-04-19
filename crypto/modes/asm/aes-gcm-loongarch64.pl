@@ -555,6 +555,285 @@ sub emit_steady_state {
     return $out;
 }
 
+# ═══════════════════════════════════════════════════════════════════
+#  LASX (256-bit) emit functions
+#
+#  Pack 2 AES blocks into one xvr0 register.  Constants are pre-
+#  duplicated via xvreplve0.q in the preheat.  GHASH×2 macros are
+#  identical to the LSX path.
+# ═══════════════════════════════════════════════════════════════════
+
+sub emit_init_gcm_lasx {
+    # IPT on packed xvr0 = [block0 | block1]
+    # Uses preloaded xvr27=Lk_ipt[0], xvr28=Lk_ipt[16] (dup'd)
+    return <<'___';
+    vld       $vr26,$s1,0
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvreplve0.q $xr26,$xr26
+    xvshuf.b  $xr2,$xr18,$xr27,$xr0
+    xvshuf.b  $xr0,$xr18,$xr28,$xr1
+    xvxor.v   $xr2,$xr2,$xr26
+    xvxor.v   $xr0,$xr0,$xr2
+___
+}
+
+sub emit_half_front_lasx {
+    my ($rk_off) = @_;
+    return <<"___";
+    vld       \$vr26,\$s1,$rk_off
+    xvandn.v  \$xr1,\$xr9,\$xr0
+    xvsrli.w  \$xr1,\$xr1,4
+    xvand.v   \$xr0,\$xr0,\$xr9
+    xvshuf.b  \$xr5,\$xr18,\$xr11,\$xr0
+    xvshuf.b  \$xr3,\$xr18,\$xr10,\$xr1
+    xvreplve0.q \$xr26,\$xr26
+    xvxor.v   \$xr0,\$xr0,\$xr1
+    xvshuf.b  \$xr4,\$xr18,\$xr10,\$xr0
+    xvxor.v   \$xr3,\$xr3,\$xr5
+    xvxor.v   \$xr4,\$xr4,\$xr5
+    xvshuf.b  \$xr2,\$xr18,\$xr10,\$xr3
+    xvshuf.b  \$xr3,\$xr18,\$xr10,\$xr4
+    xvxor.v   \$xr2,\$xr2,\$xr0
+    xvxor.v   \$xr3,\$xr3,\$xr1
+    xvshuf.b  \$xr4,\$xr18,\$xr13,\$xr2
+    xvshuf.b  \$xr0,\$xr18,\$xr12,\$xr3
+    xvxor.v   \$xr4,\$xr4,\$xr26
+    xvxor.v   \$xr0,\$xr0,\$xr4
+___
+}
+
+sub emit_half_back_lasx {
+    my ($round) = @_;
+    my $mc_idx = $round % 4;
+    # MC forward/backward are preloaded into xvr16-24
+    my @fw_regs = ('$xr16', '$xr17', '$xr19', '$xr20');
+    my @bw_regs = ('$xr21', '$xr22', '$xr23', '$xr24');
+    my $fw = $fw_regs[$mc_idx];
+    my $bw = $bw_regs[$mc_idx];
+    return <<"___";
+    xvshuf.b  \$xr5,\$xr18,\$xr15,\$xr2
+    xvshuf.b  \$xr2,\$xr18,\$xr14,\$xr3
+    xvshuf.b  \$xr3,\$xr18,\$xr0,$bw
+    xvxor.v   \$xr2,\$xr5,\$xr2
+    xvshuf.b  \$xr0,\$xr18,\$xr0,$fw
+    xvxor.v   \$xr0,\$xr0,\$xr2
+    xvxor.v   \$xr3,\$xr3,\$xr0
+    xvshuf.b  \$xr0,\$xr18,\$xr0,$fw
+    xvxor.v   \$xr0,\$xr0,\$xr3
+___
+}
+
+sub emit_final_gcm_lasx {
+    my ($final_rk_off, $sr_off) = @_;
+    # Uses preloaded xvr29/30 for Lk_sbo, xvr25 for ShiftRows, xvr31 for final RK
+    return <<"___";
+    xvshuf.b  \$xr4,\$xr18,\$xr29,\$xr2
+    xvshuf.b  \$xr0,\$xr18,\$xr30,\$xr3
+    xvxor.v   \$xr4,\$xr4,\$xr31
+    xvxor.v   \$xr0,\$xr0,\$xr4
+    xvshuf.b  \$xr0,\$xr18,\$xr0,\$xr25
+___
+}
+
+sub emit_lasx_top_abc_jo {
+    # SubBytes GF(2^4) inversion → io in xr2, jo in xr3
+    return <<'___';
+    xvandn.v  $xr1,$xr9,$xr0
+    xvsrli.w  $xr1,$xr1,4
+    xvand.v   $xr0,$xr0,$xr9
+    xvshuf.b  $xr5,$xr18,$xr11,$xr0
+    xvxor.v   $xr0,$xr0,$xr1
+    xvshuf.b  $xr3,$xr18,$xr10,$xr1
+    xvshuf.b  $xr4,$xr18,$xr10,$xr0
+    xvxor.v   $xr3,$xr3,$xr5
+    xvxor.v   $xr4,$xr4,$xr5
+    xvshuf.b  $xr2,$xr18,$xr10,$xr3
+    xvshuf.b  $xr3,$xr18,$xr10,$xr4
+    xvxor.v   $xr2,$xr2,$xr0
+    xvxor.v   $xr3,$xr3,$xr1
+___
+}
+
+# Preload ShiftRows table for given key size into xvr25
+# and final round key into xvr31
+sub emit_lasx_sr_preload {
+    my ($nr_minus_1) = @_;
+    my $sr_idx = ($nr_minus_1 + 1) % 4;     # 0..3
+    my $sr_off = $sr_idx * 16;               # offset from Lk_sr
+    my $final_rk_off = ($nr_minus_1 + 1) * 16;
+    return <<"___";
+    la.local    \$r16,Lk_sr
+    vld         \$vr25,\$r16,$sr_off
+    xvreplve0.q \$xr25,\$xr25
+    vld         \$vr31,\$s1,$final_rk_off
+    xvreplve0.q \$xr31,\$xr31
+___
+}
+
+# ── LASX counter / xor-store / seed / advance ───────────────────
+
+sub emit_lasx_counter_pair {
+    return <<'___';
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+___
+}
+
+sub emit_lasx_counter_pair_and_advance {
+    return <<'___';
+    ld.w        $r16,$sp,848
+    revb.2w     $r17,$r16
+    vori.b      $vr0,$vr8,0
+    vinsgr2vr.w $vr0,$r17,3
+    addi.w      $r17,$r16,1
+    revb.2w     $r17,$r17
+    vori.b      $vr7,$vr8,0
+    vinsgr2vr.w $vr7,$r17,3
+    xvpermi.q   $xr0,$xr7,0x02
+    addi.w      $r16,$r16,2
+    st.w        $r16,$sp,848
+    revb.2w     $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+___
+}
+
+sub emit_xor_store_from_stack_lasx {
+    return <<'___';
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+___
+}
+
+sub emit_seed_ghash_from_cipher_pair_lasx {
+    return <<'___';
+    vpickve2gr.d $r16,$vr6,0
+    vpickve2gr.d $r17,$vr6,1
+    xor         $r4,$r4,$r16
+    xor         $r5,$r5,$r17
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+___
+}
+
+sub emit_xor_store_and_seed_decrypt_lasx {
+    return <<'___';
+    ld.d        $r16,$sp,816
+    ld.d        $r17,$sp,824
+    xvld        $xr6,$r16,0
+    # Seed GHASH from ciphertext (before XOR)
+    vpickve2gr.d $r18,$vr6,0
+    vpickve2gr.d $r19,$vr6,1
+    xor         $r4,$r4,$r18
+    xor         $r5,$r5,$r19
+    xvpermi.q   $xr7,$xr6,0x01
+    vpickve2gr.d $r11,$vr7,0
+    vpickve2gr.d $r12,$vr7,1
+    revb.d      $r6,$r4
+    revb.d      $r7,$r5
+    revb.d      $r11,$r11
+    revb.d      $r12,$r12
+    # XOR with keystream + store plaintext
+    xvxor.v     $xr6,$xr6,$xr0
+    xvst        $xr6,$r17,0
+    addi.d      $r16,$r16,32
+    addi.d      $r17,$r17,32
+    st.d        $r16,$sp,816
+    st.d        $r17,$sp,824
+___
+}
+
+# ── LASX warmup / steady-state templates ─────────────────────────
+
+sub emit_warmup_state_lasx {
+    my ($nr_minus_1) = @_;
+    my $num_rounds = $nr_minus_1;
+    my $final_rk  = ($nr_minus_1 + 1) * 16;
+    my $sr_off    = ((($nr_minus_1 + 1) % 4) * 16) + 64;
+    my $out = "";
+
+    for my $r (1 .. $num_rounds) {
+        my $rk_off = $r * 16;
+        $out .= "    # ── LASX warmup round $r  half-front (rk+$rk_off) ──\n";
+        $out .= emit_half_front_lasx($rk_off);
+        $out .= "    # ── LASX warmup round $r  half-back  (mc_idx=" . ($r%4) . ") ──\n";
+        $out .= emit_half_back_lasx($r);
+    }
+
+    $out .= "    # ── LASX warmup final round (rk+$final_rk, sr_off=$sr_off) ──\n";
+    $out .= emit_lasx_top_abc_jo();
+    $out .= emit_final_gcm_lasx($final_rk, $sr_off);
+    return $out;
+}
+
+sub emit_steady_state_lasx {
+    my ($nr_minus_1) = @_;
+    my $num_rounds = $nr_minus_1;
+    my $final_rk  = ($nr_minus_1 + 1) * 16;
+    my $sr_off    = ((($nr_minus_1 + 1) % 4) * 16) + 64;
+    my $out = "";
+
+    my $total_slots = 2 * $num_rounds - 1;
+    my %ghash_at;
+    for my $g (0 .. 14) {
+        my $slot = int($g * $total_slots / 15 + 0.5);
+        $slot = $total_slots - 1 if $slot >= $total_slots;
+        $ghash_at{$slot} = $g + 1;
+    }
+
+    for my $r (1 .. $num_rounds) {
+        my $rk_off = $r * 16;
+        $out .= "    # ── LASX round $r  half-front (rk+$rk_off) ──\n";
+        $out .= emit_half_front_lasx($rk_off);
+
+        my $slot_a = 2 * ($r - 1);
+        if (exists $ghash_at{$slot_a}) {
+            my $gs = $ghash_at{$slot_a};
+            my $ty = $gs <= 7 ? "LO" : "HI";
+            $out .= "    # GHASH step $gs ($ty)\n";
+            $out .= emit_ghash_step($gs);
+        }
+
+        $out .= "    # ── LASX round $r  half-back  (mc_idx=" . ($r%4) . ") ──\n";
+        $out .= emit_half_back_lasx($r);
+
+        if ($r < $num_rounds) {
+            my $slot_b = 2 * ($r - 1) + 1;
+            if (exists $ghash_at{$slot_b}) {
+                my $gs = $ghash_at{$slot_b};
+                my $ty = $gs <= 7 ? "LO" : "HI";
+                $out .= "    # GHASH step $gs ($ty)\n";
+                $out .= emit_ghash_step($gs);
+            }
+        }
+    }
+
+    $out .= "    # ── LASX final round (rk+$final_rk, sr_off=$sr_off) ──\n";
+    $out .= emit_lasx_top_abc_jo();
+    $out .= emit_final_gcm_lasx($final_rk, $sr_off);
+    return $out;
+}
+
 my $code = <<'___';
 .text
 
@@ -829,6 +1108,57 @@ _vpaes_preheat:
     vld       $vr15,$a6,0x50
     vld       $vr14,$a6,0x60
     vldi      $vr18,0
+    jirl      $zero,$ra,0
+
+# LASX preheat: load 256-bit (duplicated) constants + Lk_ipt/Lk_sbo + MC tables
+.align 4
+_vpaes_lasx_preheat_gcm:
+    la.local  $a6,Lk_s0F
+    vld       $vr10,$a6,-0x20
+    xvreplve0.q $xr10,$xr10
+    vld       $vr11,$a6,-0x10
+    xvreplve0.q $xr11,$xr11
+    vld       $vr9,$a6,0
+    xvreplve0.q $xr9,$xr9
+    vld       $vr13,$a6,0x30
+    xvreplve0.q $xr13,$xr13
+    vld       $vr12,$a6,0x40
+    xvreplve0.q $xr12,$xr12
+    vld       $vr15,$a6,0x50
+    xvreplve0.q $xr15,$xr15
+    vld       $vr14,$a6,0x60
+    xvreplve0.q $xr14,$xr14
+    xvldi     $xr18,0
+    la.local  $r16,Lk_ipt
+    vld       $vr27,$r16,0
+    xvreplve0.q $xr27,$xr27
+    vld       $vr28,$r16,16
+    xvreplve0.q $xr28,$xr28
+    la.local  $r16,Lk_sbo
+    vld       $vr29,$r16,0
+    xvreplve0.q $xr29,$xr29
+    vld       $vr30,$r16,16
+    xvreplve0.q $xr30,$xr30
+    # Preload MC forward[0..3] into xvr16,17,19,20
+    la.local  $r16,Lk_mc_forward
+    vld       $vr16,$r16,0
+    xvreplve0.q $xr16,$xr16
+    vld       $vr17,$r16,16
+    xvreplve0.q $xr17,$xr17
+    vld       $vr19,$r16,32
+    xvreplve0.q $xr19,$xr19
+    vld       $vr20,$r16,48
+    xvreplve0.q $xr20,$xr20
+    # Preload MC backward[0..3] into xvr21,22,23,24
+    la.local  $r16,Lk_mc_backward
+    vld       $vr21,$r16,0
+    xvreplve0.q $xr21,$xr21
+    vld       $vr22,$r16,16
+    xvreplve0.q $xr22,$xr22
+    vld       $vr23,$r16,32
+    xvreplve0.q $xr23,$xr23
+    vld       $vr24,$r16,48
+    xvreplve0.q $xr24,$xr24
     jirl      $zero,$ra,0
 
 .globl  loongarch64_vpaes_gcm_encrypt
@@ -1706,6 +2036,834 @@ $code .= <<'___';
     jirl    $zero,$ra,0
 .cfi_endproc
 .size   loongarch64_vpaes_gcm_decrypt,.-loongarch64_vpaes_gcm_decrypt
+
+___
+
+# ═══════════════════════════════════════════════════════════════════
+#  LASX ENCRYPT function
+# ═══════════════════════════════════════════════════════════════════
+
+$code .= <<'___';
+.globl  loongarch64_vpaes_lasx_gcm_encrypt
+.type   loongarch64_vpaes_lasx_gcm_encrypt,@function
+.align  4
+loongarch64_vpaes_lasx_gcm_encrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_lasx_enc_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0
+    ori     $s1,$a3,0
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_lasx_enc_done
+
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+    st.d    $s0,$sp,856
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32
+    ori     $s4,$sp,0
+    addi.d  $s5,$sp,16
+    addi.d  $s6,$sp,272
+    addi.d  $s7,$sp,528
+    addi.d  $s8,$sp,544
+
+___
+$code .= emit_528_prep('$s3', '$s5', '$s4', '.Llasx_enc_prep_h_528',
+    'Build H 528B helpers (LASX enc).');
+$code .= <<'___';
+
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Lgcm_lasx_enc_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_enc_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Lgcm_lasx_enc_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_enc_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+___
+$code .= emit_528_prep('$s6', '$s8', '$s7', '.Llasx_enc_prep_h2_528',
+    'Build H^2 528B helpers (LASX enc).');
+$code .= <<'___';
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # LASX preheat (constants + Lk_ipt/Lk_sbo + MC tables).
+    bl      _vpaes_lasx_preheat_gcm
+
+    # Load Xi state.
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── LASX warmup: encrypt pair 0 (no GHASH) ──────────────────
+___
+$code .= emit_lasx_counter_pair();
+$code .= emit_init_gcm_lasx();
+
+# Preload SR table per key size into xvr25
+$code .= <<'___';
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Llasx_enc_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Llasx_enc_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Llasx_enc_warm_256
+    b           .Lgcm_lasx_enc_done
+.Llasx_enc_warm_128:
+___
+$code .= emit_lasx_sr_preload(9);
+$code .= emit_warmup_state_lasx(9);
+$code .= <<'___';
+    b           .Llasx_enc_warm_after
+.Llasx_enc_warm_192:
+___
+$code .= emit_lasx_sr_preload(11);
+$code .= emit_warmup_state_lasx(11);
+$code .= <<'___';
+    b           .Llasx_enc_warm_after
+.Llasx_enc_warm_256:
+___
+$code .= emit_lasx_sr_preload(13);
+$code .= emit_warmup_state_lasx(13);
+$code .= <<'___';
+.Llasx_enc_warm_after:
+___
+$code .= emit_xor_store_from_stack_lasx();
+$code .= emit_seed_ghash_from_cipher_pair_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+___
+$code .= emit_advance_counter_pair();
+$code .= <<'___';
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_lasx_enc_drain
+
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_lasx_enc_loop_256
+    b           .Lgcm_lasx_enc_done
+
+.Lgcm_lasx_enc_loop_128:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(9);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack_lasx();
+$code .= emit_seed_ghash_from_cipher_pair_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_128
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_loop_192:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(11);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack_lasx();
+$code .= emit_seed_ghash_from_cipher_pair_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_192
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_loop_256:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(13);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_from_stack_lasx();
+$code .= emit_seed_ghash_from_cipher_pair_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_enc_loop_256
+    b           .Lgcm_lasx_enc_drain
+
+.Lgcm_lasx_enc_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_writeback_xi();
+$code .= <<'___';
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_lasx_enc_done:
+    ld.d    $a0,$sp,856
+
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_lasx_enc_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_lasx_gcm_encrypt,.-loongarch64_vpaes_lasx_gcm_encrypt
+
+___
+
+# ═══════════════════════════════════════════════════════════════════
+#  LASX DECRYPT function
+# ═══════════════════════════════════════════════════════════════════
+
+$code .= <<'___';
+.globl  loongarch64_vpaes_lasx_gcm_decrypt
+.type   loongarch64_vpaes_lasx_gcm_decrypt,@function
+.align  4
+loongarch64_vpaes_lasx_gcm_decrypt:
+.cfi_startproc
+    beqz    $a2,.Lgcm_lasx_dec_ret0
+
+    addi.d  $sp,$sp,-960
+    st.d    $ra,$sp,952
+    st.d    $fp,$sp,944
+    st.d    $s0,$sp,936
+    st.d    $s1,$sp,928
+    st.d    $s2,$sp,920
+    st.d    $s3,$sp,912
+    st.d    $s4,$sp,904
+    st.d    $s5,$sp,896
+    st.d    $s6,$sp,888
+    st.d    $s7,$sp,880
+    st.d    $s8,$sp,872
+
+    ori     $fp,$a5,0
+    ori     $s1,$a3,0
+    ori     $s0,$a2,0
+    bstrins.d $s0,$zero,4,0
+    beqz    $s0,.Lgcm_lasx_dec_done
+
+    st.d    $a0,$sp,816
+    st.d    $a1,$sp,824
+    st.d    $a4,$sp,840
+    st.d    $s0,$sp,856
+
+    la.local $s2,.Lrem_8bit_shl48
+    addi.d  $s3,$fp,32
+    ori     $s4,$sp,0
+    addi.d  $s5,$sp,16
+    addi.d  $s6,$sp,272
+    addi.d  $s7,$sp,528
+    addi.d  $s8,$sp,544
+
+___
+$code .= emit_528_prep('$s3', '$s5', '$s4', '.Llasx_dec_prep_h_528',
+    'Build H 528B helpers (LASX dec).');
+$code .= <<'___';
+
+    la.local $t7,.Lrem_4bit
+    ld.d    $r6,$fp,16
+    ld.d    $r7,$fp,24
+
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    ld.d    $r12,$r14,0
+    ld.d    $r13,$r14,8
+
+    add.d   $r15,$r15,$s3
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    ld.d    $r16,$r16,0
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+
+    addi.d  $r20,$zero,7
+.Lgcm_lasx_dec_h2_lo:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_dec_h2_lo
+
+    or      $r7,$r6,$zero
+    addi.d  $r20,$zero,8
+.Lgcm_lasx_dec_h2_hi:
+    andi    $r14,$r7,0x0f
+    andi    $r15,$r7,0xf0
+    slli.d  $r14,$r14,4
+    add.d   $r14,$r14,$s3
+    add.d   $r15,$r15,$s3
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r14,0
+    ld.d    $r18,$r14,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    andi    $r16,$r13,0x0f
+    slli.d  $r16,$r16,3
+    add.d   $r16,$r16,$t7
+    slli.d  $r21,$r12,60
+    srli.d  $r13,$r13,4
+    ld.d    $r16,$r16,0
+    or      $r13,$r13,$r21
+    srli.d  $r12,$r12,4
+    ld.d    $r17,$r15,0
+    ld.d    $r18,$r15,8
+    xor     $r12,$r12,$r16
+    xor     $r12,$r12,$r17
+    xor     $r13,$r13,$r18
+    srli.d  $r7,$r7,8
+    addi.d  $r20,$r20,-1
+    bnez    $r20,.Lgcm_lasx_dec_h2_hi
+
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$sp,800
+    st.d    $r13,$sp,808
+
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
+    ld.d    $r12,$sp,800
+    ld.d    $r13,$sp,808
+    revb.d  $r12,$r12
+    revb.d  $r13,$r13
+    st.d    $r12,$s6,128
+    st.d    $r13,$s6,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,64
+    st.d    $r13,$s6,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,32
+    st.d    $r13,$s6,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s6,16
+    st.d    $r13,$s6,24
+
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s6,48
+    st.d    $r15,$s6,56
+
+    ld.d    $r12,$s6,64
+    ld.d    $r13,$s6,72
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,80
+    st.d    $r17,$s6,88
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,96
+    st.d    $r17,$s6,104
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,112
+    st.d    $r17,$s6,120
+
+    ld.d    $r12,$s6,128
+    ld.d    $r13,$s6,136
+    ld.d    $r14,$s6,16
+    ld.d    $r15,$s6,24
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,144
+    st.d    $r17,$s6,152
+    ld.d    $r14,$s6,32
+    ld.d    $r15,$s6,40
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,160
+    st.d    $r17,$s6,168
+    ld.d    $r14,$s6,48
+    ld.d    $r15,$s6,56
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,176
+    st.d    $r17,$s6,184
+    ld.d    $r14,$s6,64
+    ld.d    $r15,$s6,72
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,192
+    st.d    $r17,$s6,200
+    ld.d    $r14,$s6,80
+    ld.d    $r15,$s6,88
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,208
+    st.d    $r17,$s6,216
+    ld.d    $r14,$s6,96
+    ld.d    $r15,$s6,104
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,224
+    st.d    $r17,$s6,232
+    ld.d    $r14,$s6,112
+    ld.d    $r15,$s6,120
+    xor     $r16,$r12,$r14
+    xor     $r17,$r13,$r15
+    st.d    $r16,$s6,240
+    st.d    $r17,$s6,248
+
+___
+$code .= emit_528_prep('$s6', '$s8', '$s7', '.Llasx_dec_prep_h2_528',
+    'Build H^2 528B helpers (LASX dec).');
+$code .= <<'___';
+
+    # Load counter, save counter to stack.
+    ld.d    $r16,$sp,840
+    vld     $vr8,$r16,0
+    ld.w    $r16,$r16,12
+    revb.2w $r16,$r16
+    st.w    $r16,$sp,848
+
+    # LASX preheat.
+    bl      _vpaes_lasx_preheat_gcm
+
+    ld.d    $r4,$fp,0
+    ld.d    $r5,$fp,8
+
+    # ─── LASX warmup: decrypt pair 0 (no GHASH) ──────────────────
+___
+$code .= emit_lasx_counter_pair();
+$code .= emit_init_gcm_lasx();
+
+$code .= <<'___';
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Llasx_dec_warm_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Llasx_dec_warm_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Llasx_dec_warm_256
+    b           .Lgcm_lasx_dec_done
+.Llasx_dec_warm_128:
+___
+$code .= emit_lasx_sr_preload(9);
+$code .= emit_warmup_state_lasx(9);
+$code .= <<'___';
+    b           .Llasx_dec_warm_after
+.Llasx_dec_warm_192:
+___
+$code .= emit_lasx_sr_preload(11);
+$code .= emit_warmup_state_lasx(11);
+$code .= <<'___';
+    b           .Llasx_dec_warm_after
+.Llasx_dec_warm_256:
+___
+$code .= emit_lasx_sr_preload(13);
+$code .= emit_warmup_state_lasx(13);
+$code .= <<'___';
+.Llasx_dec_warm_after:
+___
+$code .= emit_xor_store_and_seed_decrypt_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+___
+$code .= emit_advance_counter_pair();
+$code .= <<'___';
+    addi.d      $s0,$s0,-32
+    beqz        $s0,.Lgcm_lasx_dec_drain
+
+    ld.w        $r16,$s1,240
+    ori         $r17,$zero,9
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_128
+    ori         $r17,$zero,11
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_192
+    ori         $r17,$zero,13
+    beq         $r16,$r17,.Lgcm_lasx_dec_loop_256
+    b           .Lgcm_lasx_dec_done
+
+.Lgcm_lasx_dec_loop_128:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(9);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_128
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_loop_192:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(11);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_192
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_loop_256:
+___
+$code .= emit_lasx_counter_pair_and_advance();
+$code .= emit_init_gcm_lasx();
+$code .= emit_steady_state_lasx(13);
+$code .= <<'___';
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_xor_store_and_seed_decrypt_lasx();
+$code .= <<'___';
+    GHASH528_INIT2
+    addi.d      $s0,$s0,-32
+    bnez        $s0,.Lgcm_lasx_dec_loop_256
+    b           .Lgcm_lasx_dec_drain
+
+.Lgcm_lasx_dec_drain:
+    .rept 7
+    GHASH528_PRE2
+    GHASH528_POST2_LO
+    .endr
+    .rept 8
+    GHASH528_PRE2
+    GHASH528_POST2_HI
+    .endr
+    GHASH528_FINAL2
+___
+$code .= emit_ghash_combine_xi();
+$code .= emit_writeback_xi();
+$code .= <<'___';
+    ld.w    $r16,$sp,848
+    revb.2w $r16,$r16
+    vinsgr2vr.w $vr8,$r16,3
+    ld.d    $r16,$sp,840
+    vst     $vr8,$r16,0
+
+.Lgcm_lasx_dec_done:
+    ld.d    $a0,$sp,856
+
+    ld.d    $ra,$sp,952
+    ld.d    $fp,$sp,944
+    ld.d    $s0,$sp,936
+    ld.d    $s1,$sp,928
+    ld.d    $s2,$sp,920
+    ld.d    $s3,$sp,912
+    ld.d    $s4,$sp,904
+    ld.d    $s5,$sp,896
+    ld.d    $s6,$sp,888
+    ld.d    $s7,$sp,880
+    ld.d    $s8,$sp,872
+    addi.d  $sp,$sp,960
+    jirl    $zero,$ra,0
+
+.Lgcm_lasx_dec_ret0:
+    move    $a0,$zero
+    jirl    $zero,$ra,0
+.cfi_endproc
+.size   loongarch64_vpaes_lasx_gcm_decrypt,.-loongarch64_vpaes_lasx_gcm_decrypt
 
 ___
 

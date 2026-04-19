@@ -183,12 +183,22 @@ size_t loongarch64_vpaes_gcm_encrypt(const unsigned char *in, unsigned char *out
     size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
 size_t loongarch64_vpaes_gcm_decrypt(const unsigned char *in, unsigned char *out,
     size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
+size_t loongarch64_vpaes_lasx_gcm_encrypt(const unsigned char *in, unsigned char *out,
+    size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
+size_t loongarch64_vpaes_lasx_gcm_decrypt(const unsigned char *in, unsigned char *out,
+    size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
 void gcm_ghash_4bit(u64 Xi[2], const u128 Htable[16], const u8 *inp,
     size_t len);
 #define AES_GCM_ENC_BYTES 64
 #define AES_GCM_DEC_BYTES 64
-#define AES_gcm_encrypt loongarch64_vpaes_gcm_encrypt
-#define AES_gcm_decrypt loongarch64_vpaes_gcm_decrypt
+#define AES_gcm_encrypt \
+    ((OPENSSL_loongarch_hwcap_P & LOONGARCH_HWCAP_LASX) \
+     ? loongarch64_vpaes_lasx_gcm_encrypt \
+     : loongarch64_vpaes_gcm_encrypt)
+#define AES_gcm_decrypt \
+    ((OPENSSL_loongarch_hwcap_P & LOONGARCH_HWCAP_LASX) \
+     ? loongarch64_vpaes_lasx_gcm_decrypt \
+     : loongarch64_vpaes_gcm_decrypt)
 #define AES_GCM_ASM(ctx) \
     (ctx->ctr == vpaes_ctr32_encrypt_blocks && ctx->gcm.funcs.ghash == gcm_ghash_4bit)
 #endif
