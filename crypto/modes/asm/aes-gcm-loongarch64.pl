@@ -6,31 +6,48 @@
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
-# LoongArch64 fused AES-GCM
+# LoongArch64 fused AES-GCM (LSX + LASX)
 #
-# First target:
-#   - encrypt only
-#   - LSX x2 AES + GHASH x2
-#   - process aligned 32-byte chunks
-#   - leave tail handling to generic CRYPTO_gcm128_encrypt_ctr32()
+# Two implementation paths:
+#
+#   LSX path (128-bit):
+#     - encrypt & decrypt
+#     - two separate vr0/vr19 states processed in parallel
+#     - GHASH x2 interleaved between AES half-rounds
+#     - process aligned 32-byte chunks
+#
+#   LASX path (256-bit):
+#     - encrypt & decrypt
+#     - two blocks packed into one xvr0 register
+#     - all AES constants duplicated to 256-bit via xvreplve0.q
+#     - MC tables + ShiftRows + final RK permanently resident in xvr16-25,31
+#     - GHASH x2 interleaved between AES half-rounds (same as LSX)
+#     - process aligned 32-byte chunks
+#
+# Both leave tail handling to generic CRYPTO_gcm128_encrypt_ctr32().
 #
 # This file is intentionally independent from vpaes-loongarch64.pl.
 # The fused AES/GHASH schedule has different register ownership and
 # different optimization goals from generic VPAES CTR code.
 #
-# Interface target:
-#   size_t loongarch64_vpaes_gcm_encrypt(const unsigned char *in,
-#       unsigned char *out, size_t len, const void *key,
-#       unsigned char ivec[16], u64 *Xi);
+# Interface:
+#   size_t loongarch64_vpaes_gcm_encrypt(...)       // LSX path
+#   size_t loongarch64_vpaes_gcm_decrypt(...)       // LSX path
+#   size_t loongarch64_vpaes_lasx_gcm_encrypt(...)  // LASX path
+#   size_t loongarch64_vpaes_lasx_gcm_decrypt(...)  // LASX path
+#
+#   All four share the same signature:
+#     (const unsigned char *in, unsigned char *out, size_t len,
+#      const void *key, unsigned char ivec[16], u64 *Xi)
 #
 # Notes on context recovery:
 #   - Xi points to GCM128_CONTEXT::Xi.u
 #   - Htable is reachable as Xi + 32 bytes
 #   - the relative layout is fixed by include/crypto/modes.h
 #
-# Planned fused register ownership
-# --------------------------------
-# GPR
+# Register ownership
+# ------------------
+# GPR (shared by both paths)
 #   a0  inp
 #   a1  out
 #   a2  len
@@ -48,56 +65,50 @@
 #   s7  H^2 shl4 bytes
 #   s8  H^2 shr4 table
 #
-#   t0/t1/t2/t3/t4/t5/t6/t7/t8/t9
-#       reserved for AES/GHASH common temporaries and loop control
+#   t0-t9  AES/GHASH temporaries and loop control
 #
-# GHASH x2 fixed GPR layout
-#   stream A:
-#     r6/r7   src_hi/src_lo
-#     r8/r9   z_hi/z_lo
-#     r10     cur
-#   stream B:
-#     r11/r12 src_hi/src_lo
-#     r13/r14 z_hi/z_lo
-#     r15     cur
-#   temps:
-#     r16/r17/r18  stream A
-#     r19/r20/r21  stream B
-#   common:
-#     r4/r5
+# GHASH x2 fixed GPR layout (shared by both paths)
+#   stream A: r6/r7 src, r8/r9 z, r10 cur
+#   stream B: r11/r12 src, r13/r14 z, r15 cur
+#   temps:    r16-r18 (A), r19-r21 (B)
+#   common:   r4/r5
 #
-# VPR
-#   vr9..vr15, vr18
-#       VPAES preheat constants
-#   vr0 / vr19
-#       AES states for block pair
-#   vr1/vr20, vr2/vr21, vr3/vr22, vr4/vr23, vr5/vr24
-#       AES x2 round temporaries
-#   vr6/vr7/vr8
-#       wrapper staging for plaintext/ciphertext/counter template
-#   vr25/vr26
-#       AES input/final transform temporaries
+# VPR – LSX path (128-bit, vr0..vr30)
+#   vr9..vr15, vr18    VPAES preheat constants
+#   vr27/vr28           Lk_ipt[0]/Lk_ipt[16] (preloaded)
+#   vr29/vr30           Lk_sbo[0]/Lk_sbo[16] (preloaded)
+#   vr0 / vr19          AES states for block pair
+#   vr1-5 / vr20-24     AES x2 round temporaries
+#   vr6/vr7/vr8         plaintext/ciphertext staging / counter template
 #
-# Planned steady-state schedule
-# -----------------------------
-# The fusion layer must preserve the natural grain of the existing x2 routes:
+# VPR – LASX path (256-bit, xvr0..xvr31)
+#   xvr9..xvr15, xvr18  VPAES constants (duplicated to 256-bit)
+#   xvr27/xvr28          Lk_ipt[0]/Lk_ipt[16] (duplicated)
+#   xvr29/xvr30          Lk_sbo[0]/Lk_sbo[16] (duplicated)
+#   xvr0                 AES state (2 blocks packed: [block0 | block1])
+#   xvr1..xvr5           AES round temporaries
+#   vr6/vr7/vr8          plaintext/ciphertext staging / counter template
+#   xvr16,17,19,20       MC_forward[0..3] (preloaded, permanent)
+#   xvr21,22,23,24       MC_backward[0..3] (preloaded, permanent)
+#   xvr25                ShiftRows table (preloaded per key-size)
+#   xvr26                round-key staging temporary
+#   xvr31                final round key (preloaded per key-size)
 #
-#   VPAES LSX x2 natural blocks:
-#     - init
-#     - entry
-#     - loop front
-#     - loop back
-#     - final
+# Steady-state schedule
+# ---------------------
+# Both paths use fully-unrolled AES rounds with GHASH x2 interleaved:
 #
-#   GHASH x2 natural blocks:
-#     - INIT2
-#     - PRE2
-#     - POST2_LO / POST2_HI
-#     - FINAL2
+#   AES building blocks (per path):
+#     init       – IPT + round key 0
+#     half_front – top_abc + SubBytes + round-key XOR
+#     half_back  – MixColumns (4 shuffles + XORs)
+#     final      – last-round sbo + ShiftRows
 #
-# Fusion therefore means interleaving these existing x2 building blocks at
-# their natural dependency boundaries, rather than inventing a new coarser
-# block structure or arbitrarily over-fragmenting them.
+#   GHASH x2 building blocks (shared):
+#     INIT2 / PRE2 / POST2_LO / POST2_HI / FINAL2
+#
+# 15 GHASH byte-steps are evenly distributed across 2*(Nr-1) half-round
+# slots between half_front and half_back of each middle AES round.
 
 my $output;
 $output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
@@ -203,12 +214,14 @@ sub emit_vpaes_lsx2_top_c {
 ___
 }
 
-# ── Half-round building blocks for fully-unrolled fused AES-GCM ────
+# ── LSX half-round building blocks for fully-unrolled fused AES-GCM ──
 #
-# emit_init_gcm()   – IPT + rk[0], GHASH-safe (only clobbers r16 + VRs)
-# emit_half_front() – top_a+b+c + jo-vxor + SubBytes  (~51 SIMD, 0 GPR)
-# emit_half_back()  – MixColumns  (~27 SIMD, 1 ld.d + 2 vld via r16)
-# emit_final_gcm()  – last-round sbo + ShiftRows (uses r16 temporarily)
+# These operate on two separate vr0/vr19 states in parallel.
+#
+# emit_init_gcm()   – IPT + rk[0] via preloaded vr27/vr28
+# emit_half_front() – top_a+b+c + jo-vxor + SubBytes  (~51 SIMD)
+# emit_half_back()  – MixColumns via memory-loaded MC tables (~27 SIMD)
+# emit_final_gcm()  – last-round sbo via vr29/vr30 + ShiftRows
 
 sub emit_init_gcm {
     # Uses preloaded vr27=Lk_ipt[0], vr28=Lk_ipt[16]
@@ -556,11 +569,19 @@ sub emit_steady_state {
 }
 
 # ═══════════════════════════════════════════════════════════════════
-#  LASX (256-bit) emit functions
+#  LASX (256-bit) half-round building blocks
 #
-#  Pack 2 AES blocks into one xvr0 register.  Constants are pre-
-#  duplicated via xvreplve0.q in the preheat.  GHASH×2 macros are
-#  identical to the LSX path.
+#  Two AES blocks are packed into one xvr0 register.  All VPAES
+#  constants are pre-duplicated to 256-bit via xvreplve0.q in preheat.
+#  MixColumns tables and ShiftRows/final-RK are permanently resident
+#  in xvr16-25,31, eliminating per-round memory loads.
+#
+#  emit_init_gcm_lasx()      – IPT via preloaded xvr27/xvr28
+#  emit_half_front_lasx()    – top_abc + SubBytes + rk XOR (19 insns)
+#  emit_half_back_lasx()     – MixColumns via preloaded xvr16-24 (9 insns)
+#  emit_final_gcm_lasx()     – sbo via xvr29/30 + SR via xvr25 (5 insns)
+#  emit_lasx_top_abc_jo()    – SubBytes GF(2^4) inversion (13 insns)
+#  emit_lasx_sr_preload()    – load SR→xvr25 + final RK→xvr31
 # ═══════════════════════════════════════════════════════════════════
 
 sub emit_init_gcm_lasx {
@@ -1110,7 +1131,13 @@ _vpaes_preheat:
     vldi      $vr18,0
     jirl      $zero,$ra,0
 
-# LASX preheat: load 256-bit (duplicated) constants + Lk_ipt/Lk_sbo + MC tables
+# LASX preheat: load 256-bit constants + Lk_ipt/Lk_sbo + MC forward/backward
+# Registers loaded:
+#   xvr9-15,18     VPAES constants (duplicated)
+#   xvr27/28       Lk_ipt[0/16]
+#   xvr29/30       Lk_sbo[0/16]
+#   xvr16,17,19,20 MC_forward[0..3]
+#   xvr21,22,23,24 MC_backward[0..3]
 .align 4
 _vpaes_lasx_preheat_gcm:
     la.local  $a6,Lk_s0F
