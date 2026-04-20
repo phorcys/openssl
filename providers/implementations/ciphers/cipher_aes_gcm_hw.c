@@ -73,6 +73,9 @@ static int generic_aes_gcm_cipher_update(PROV_GCM_CTX *ctx, const unsigned char 
                 if (CRYPTO_gcm128_encrypt(&ctx->gcm, in, out, res))
                     return 0;
 
+#if defined(AES_GCM_PREP)
+                AES_GCM_PREP(ctx);
+#endif
                 bulk = AES_gcm_encrypt(in + res, out + res, len - res,
                     ctx->gcm.key,
                     ctx->gcm.Yi.c, ctx->gcm.Xi.u);
@@ -102,6 +105,9 @@ static int generic_aes_gcm_cipher_update(PROV_GCM_CTX *ctx, const unsigned char 
                 if (CRYPTO_gcm128_decrypt(&ctx->gcm, in, out, res))
                     return 0;
 
+#if defined(AES_GCM_PREP)
+                AES_GCM_PREP(ctx);
+#endif
                 bulk = AES_gcm_decrypt(in + res, out + res, len - res,
                     ctx->gcm.key,
                     ctx->gcm.Yi.c, ctx->gcm.Xi.u);

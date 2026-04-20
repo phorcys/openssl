@@ -124,6 +124,16 @@ struct gcm128_context {
      * used in some assembler modules, i.e. don't change the order!
      */
     u128 Htable[16];
+#if defined(__loongarch__) || defined(__loongarch64)
+    /*
+     * LoongArch64 fused AES-GCM caches key-dependent 8-bit GHASH tables here
+     * so the asm path does not rebuild them on every encrypt/decrypt call.
+     * The original Yi..Htable ordering above must remain unchanged.
+     */
+    u128 Htable8[256];
+    u128 Htable8_2[256];
+    unsigned int Htable8_ready;
+#endif
     struct gcm_funcs_st funcs;
     unsigned int mres, ares;
     block128_f block;

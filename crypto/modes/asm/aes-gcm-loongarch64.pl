@@ -1294,9 +1294,7 @@ loongarch64_vpaes_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_enc_ret0
 
-    lu12i.w $r16,-3
-    ori     $r16,$r16,3904
-    add.d   $sp,$sp,$r16        # sp -= 8384
+    addi.d  $sp,$sp,-192
     st.d    $ra,$sp,0
     st.d    $fp,$sp,8
     st.d    $s0,$sp,16
@@ -1324,142 +1322,9 @@ loongarch64_vpaes_gcm_encrypt:
     st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
-
-___
-$code .= <<'___';
-
-    # Compute raw H^2 using the 4-bit multiply sequence.
-    # H.u[0..1] at $fp+16 are already BSWAP'd by CRYPTO_gcm128_init.
-    # Feed them directly (without revb) so the byte-by-byte multiply
-    # processes byte[15]→byte[0], matching gcm_ghash_4bit's order.
-    la.local $t7,.Lrem_4bit
-    ld.d    $r6,$fp,16
-    ld.d    $r7,$fp,24
-
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    ld.d    $r12,$r14,0
-    ld.d    $r13,$r14,8
-
-    add.d   $r15,$r15,$s3
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    ld.d    $r16,$r16,0
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-
-    addi.d  $r20,$zero,7
-.Lgcm_h2_lo:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_h2_lo
-
-    or      $r7,$r6,$zero
-    addi.d  $r20,$zero,8
-.Lgcm_h2_hi:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_h2_hi
-
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
-    st.d    $r12,$sp,96
-    st.d    $r13,$sp,104
-
-    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
-    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
-    ld.d    $r12,$s3,128
-    ld.d    $r13,$s3,136
-    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
-___
-$code .= emit_build_8bit_table('$s3', '.Lenc_h_8bit');
-$code .= <<'___';
-
-    # Build H^2 8-bit table from the saved raw native value.
-    ld.d    $r12,$sp,96
-    ld.d    $r13,$sp,104
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
+    addi.d  $s3,$fp,288         # cached H 8-bit table
     lu12i.w $r16,1
-    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
-___
-$code .= emit_build_8bit_table('$s6', '.Lenc_h2_8bit');
-$code .= <<'___';
+    add.d   $s6,$s3,$r16        # cached H^2 8-bit table
 
     # Load counter, save counter to stack.
     ld.d    $r16,$sp,136
@@ -1630,9 +1495,7 @@ $code .= <<'___';
     ld.d    $s6,$sp,64
     ld.d    $s7,$sp,72
     ld.d    $s8,$sp,80
-    lu12i.w $r16,2
-    ori     $r16,$r16,192
-    add.d   $sp,$sp,$r16        # sp += 8384
+    addi.d  $sp,$sp,192
     jirl    $zero,$ra,0
 
 .Lgcm_enc_ret0:
@@ -1657,9 +1520,7 @@ loongarch64_vpaes_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_dec_ret0
 
-    lu12i.w $r16,-3
-    ori     $r16,$r16,3904
-    add.d   $sp,$sp,$r16        # sp -= 8384
+    addi.d  $sp,$sp,-192
     st.d    $ra,$sp,0
     st.d    $fp,$sp,8
     st.d    $s0,$sp,16
@@ -1687,139 +1548,9 @@ loongarch64_vpaes_gcm_decrypt:
     st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
-
-___
-$code .= <<'___';
-
-    # Compute raw H^2 using the 4-bit multiply sequence.
-    la.local $t7,.Lrem_4bit
-    ld.d    $r6,$fp,16
-    ld.d    $r7,$fp,24
-
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    ld.d    $r12,$r14,0
-    ld.d    $r13,$r14,8
-
-    add.d   $r15,$r15,$s3
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    ld.d    $r16,$r16,0
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-
-    addi.d  $r20,$zero,7
-.Ldec_gcm_h2_lo:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Ldec_gcm_h2_lo
-
-    or      $r7,$r6,$zero
-    addi.d  $r20,$zero,8
-.Ldec_gcm_h2_hi:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Ldec_gcm_h2_hi
-
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
-    st.d    $r12,$sp,96
-    st.d    $r13,$sp,104
-
-    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
-    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
-    ld.d    $r12,$s3,128
-    ld.d    $r13,$s3,136
-    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
-___
-$code .= emit_build_8bit_table('$s3', '.Lgen_h_8bit');
-$code .= <<'___';
-
-    # Build H^2 8-bit table from the saved raw native value.
-    ld.d    $r12,$sp,96
-    ld.d    $r13,$sp,104
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
+    addi.d  $s3,$fp,288         # cached H 8-bit table
     lu12i.w $r16,1
-    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
-___
-$code .= emit_build_8bit_table('$s6', '.Lgen_h2_8bit');
-$code .= <<'___';
+    add.d   $s6,$s3,$r16        # cached H^2 8-bit table
 
     # Load counter, save counter to stack.
     ld.d    $r16,$sp,136
@@ -1986,9 +1717,7 @@ $code .= <<'___';
     ld.d    $s6,$sp,64
     ld.d    $s7,$sp,72
     ld.d    $s8,$sp,80
-    lu12i.w $r16,2
-    ori     $r16,$r16,192
-    add.d   $sp,$sp,$r16        # sp += 8384
+    addi.d  $sp,$sp,192
     jirl    $zero,$ra,0
 
 .Lgcm_dec_ret0:
@@ -2011,9 +1740,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_enc_ret0
 
-    lu12i.w $r16,-3
-    ori     $r16,$r16,3904
-    add.d   $sp,$sp,$r16        # sp -= 8384
+    addi.d  $sp,$sp,-192
     st.d    $ra,$sp,0
     st.d    $fp,$sp,8
     st.d    $s0,$sp,16
@@ -2038,141 +1765,9 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
-
-___
-$code .= <<'___';
-
-    la.local $t7,.Lrem_4bit
-    ld.d    $r6,$fp,16
-    ld.d    $r7,$fp,24
-
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    ld.d    $r12,$r14,0
-    ld.d    $r13,$r14,8
-
-    add.d   $r15,$r15,$s3
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    ld.d    $r16,$r16,0
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-
-    addi.d  $r20,$zero,7
-.Lgcm_lasx_enc_h2_lo:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_lasx_enc_h2_lo
-
-    or      $r7,$r6,$zero
-    addi.d  $r20,$zero,8
-.Lgcm_lasx_enc_h2_hi:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_lasx_enc_h2_hi
-
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
-    st.d    $r12,$sp,96
-    st.d    $r13,$sp,104
-
-    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
-    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
-    ld.d    $r12,$s3,128
-    ld.d    $r13,$s3,136
-    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
-___
-$code .= emit_build_8bit_table('$s3', '.Llasx_enc_h_8bit');
-$code .= <<'___';
-
-    # Build H^2 8-bit table from the saved raw native value.
-    ld.d    $r12,$sp,96
-    ld.d    $r13,$sp,104
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
+    addi.d  $s3,$fp,288         # cached H 8-bit table
     lu12i.w $r16,1
-    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
-___
-$code .= emit_build_8bit_table('$s6', '.Llasx_enc_h2_8bit');
-$code .= <<'___';
-
-___
-$code .= <<'___';
+    add.d   $s6,$s3,$r16        # cached H^2 8-bit table
 
     # Load counter, save counter to stack.
     ld.d    $r16,$sp,136
@@ -2325,9 +1920,7 @@ $code .= <<'___';
     ld.d    $s6,$sp,64
     ld.d    $s7,$sp,72
     ld.d    $s8,$sp,80
-    lu12i.w $r16,2
-    ori     $r16,$r16,192
-    add.d   $sp,$sp,$r16        # sp += 8384
+    addi.d  $sp,$sp,192
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_enc_ret0:
@@ -2350,9 +1943,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_dec_ret0
 
-    lu12i.w $r16,-3
-    ori     $r16,$r16,3904
-    add.d   $sp,$sp,$r16        # sp -= 8384
+    addi.d  $sp,$sp,-192
     st.d    $ra,$sp,0
     st.d    $fp,$sp,8
     st.d    $s0,$sp,16
@@ -2377,141 +1968,9 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
-
-___
-$code .= <<'___';
-
-    la.local $t7,.Lrem_4bit
-    ld.d    $r6,$fp,16
-    ld.d    $r7,$fp,24
-
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    ld.d    $r12,$r14,0
-    ld.d    $r13,$r14,8
-
-    add.d   $r15,$r15,$s3
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    ld.d    $r16,$r16,0
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-
-    addi.d  $r20,$zero,7
-.Lgcm_lasx_dec_h2_lo:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_lasx_dec_h2_lo
-
-    or      $r7,$r6,$zero
-    addi.d  $r20,$zero,8
-.Lgcm_lasx_dec_h2_hi:
-    andi    $r14,$r7,0x0f
-    andi    $r15,$r7,0xf0
-    slli.d  $r14,$r14,4
-    add.d   $r14,$r14,$s3
-    add.d   $r15,$r15,$s3
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    andi    $r16,$r13,0x0f
-    slli.d  $r16,$r16,3
-    add.d   $r16,$r16,$t7
-    slli.d  $r21,$r12,60
-    srli.d  $r13,$r13,4
-    ld.d    $r16,$r16,0
-    or      $r13,$r13,$r21
-    srli.d  $r12,$r12,4
-    ld.d    $r17,$r15,0
-    ld.d    $r18,$r15,8
-    xor     $r12,$r12,$r16
-    xor     $r12,$r12,$r17
-    xor     $r13,$r13,$r18
-    srli.d  $r7,$r7,8
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lgcm_lasx_dec_h2_hi
-
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
-    st.d    $r12,$sp,96
-    st.d    $r13,$sp,104
-
-    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
-    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
-    ld.d    $r12,$s3,128
-    ld.d    $r13,$s3,136
-    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
-___
-$code .= emit_build_8bit_table('$s3', '.Llasx_dec_h_8bit');
-$code .= <<'___';
-
-    # Build H^2 8-bit table from the saved raw native value.
-    ld.d    $r12,$sp,96
-    ld.d    $r13,$sp,104
-    revb.d  $r12,$r12
-    revb.d  $r13,$r13
+    addi.d  $s3,$fp,288         # cached H 8-bit table
     lu12i.w $r16,1
-    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
-___
-$code .= emit_build_8bit_table('$s6', '.Llasx_dec_h2_8bit');
-$code .= <<'___';
-
-___
-$code .= <<'___';
+    add.d   $s6,$s3,$r16        # cached H^2 8-bit table
 
     # Load counter, save counter to stack.
     ld.d    $r16,$sp,136
@@ -2658,9 +2117,7 @@ $code .= <<'___';
     ld.d    $s6,$sp,64
     ld.d    $s7,$sp,72
     ld.d    $s8,$sp,80
-    lu12i.w $r16,2
-    ori     $r16,$r16,192
-    add.d   $sp,$sp,$r16        # sp += 8384
+    addi.d  $sp,$sp,192
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_dec_ret0:

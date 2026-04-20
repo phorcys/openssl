@@ -187,6 +187,7 @@ size_t loongarch64_vpaes_lasx_gcm_encrypt(const unsigned char *in, unsigned char
     size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
 size_t loongarch64_vpaes_lasx_gcm_decrypt(const unsigned char *in, unsigned char *out,
     size_t len, const void *key, unsigned char ivec[16], u64 *Xi);
+void loongarch64_gcm_prepare_tables(GCM128_CONTEXT *gcm);
 void gcm_ghash_4bit(u64 Xi[2], const u128 Htable[16], const u8 *inp,
     size_t len);
 #define AES_GCM_ENC_BYTES 64
@@ -200,7 +201,8 @@ void gcm_ghash_4bit(u64 Xi[2], const u128 Htable[16], const u8 *inp,
      ? loongarch64_vpaes_lasx_gcm_decrypt \
      : loongarch64_vpaes_gcm_decrypt)
 #define AES_GCM_ASM(ctx) \
-    (ctx->ctr == vpaes_ctr32_encrypt_blocks && ctx->gcm.funcs.ghash == gcm_ghash_4bit)
+    (ctx->ctr == (ctr128_f)vpaes_ctr32_encrypt_blocks)
+#define AES_GCM_PREP(ctx) loongarch64_gcm_prepare_tables(&(ctx)->gcm)
 #endif
 #endif
 
