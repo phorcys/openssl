@@ -11,83 +11,74 @@
     xor     \HI,\HI,\TMP0
 .endm
 
-.macro GHASH528_INIT TAB SRCLO CUR ZHI ZLO TBYTE TPTR
-    andi    \TPTR,  \SRCLO, 0x0f
-    bstrpick.d \CUR, \SRCLO, 7, 4
-    alsl.d  \TPTR,  \TPTR, \TAB, 4
-    ld.d    \ZHI,   \TPTR, 0
-    ld.d    \ZLO,   \TPTR, 8
+# ── 8-bit table GHASH macros ─────────────────────────────────────────
+# Each H value has a 256-entry table (4096 bytes = 256 x 16).
+# T[i] = i * H in GF(2^128), reflected GCM convention.
+# Index 128 = H (x^0), basis via REDUCE1BIT: T[64]=x*H, ..., T[1]=x^7*H.
+#
+# GHASH8B_INIT:   5 instructions - extract byte 0, look up Z=T[byte], advance
+# GHASH8B_STEP:  14 instructions - shift Z>>8, reduce, XOR T[next_byte], advance
+# GHASH8B_FINAL: 13 instructions - same as STEP without final advance
+
+.macro GHASH8B_INIT TAB SRCLO ZHI ZLO T0
+    andi    \T0,    \SRCLO, 0xff
+    alsl.d  \T0,    \T0, \TAB, 4
+    ld.d    \ZHI,   \T0, 0
+    ld.d    \ZLO,   \T0, 8
     srli.d  \SRCLO, \SRCLO, 8
 .endm
 
-.macro GHASH528_PRE SHL SHR CUR ZHI ZLO TRED THI TLO
-    ldx.bu  \TLO,  \SHL, \CUR
-    andi    \TRED, \ZLO, 0xff
-    xor     \TRED, \TRED, \TLO
-    alsl.d  \TRED, \TRED, $s2, 3
-    ld.d    \TRED, \TRED, 0
-    alsl.d  \THI,  \CUR,  \SHR, 4
-    ld.d    \TLO,  \THI,  8
-    ld.d    \THI,  \THI,  0
-.endm
-
-.macro GHASH528_POST TAB SRC CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    srli.d  \ZLO,    \ZLO, 8
+.macro GHASH8B_STEP TAB SRC ZHI ZLO T0 T1
+    andi    \T0,    \ZLO, 0xff
+    srli.d  \ZLO,   \ZLO, 8
     bstrins.d \ZLO, \ZHI, 63, 56
-    srli.d  \ZHI,    \ZHI, 8
-    xor     \ZHI,    \ZHI, \TRED
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
-
-    andi    \TPTR,   \SRC, 0x0f
-    bstrpick.d \CUR, \SRC, 7, 4
-    alsl.d  \TPTR,   \TPTR, \TAB, 4
-    ld.d    \THI,    \TPTR, 0
-    ld.d    \TLO,    \TPTR, 8
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
-    srli.d  \SRC,    \SRC, 8
+    srli.d  \ZHI,   \ZHI, 8
+    alsl.d  \T0,    \T0, $s2, 3
+    ld.d    \T0,    \T0, 0
+    xor     \ZHI,   \ZHI, \T0
+    andi    \T1,    \SRC, 0xff
+    alsl.d  \T1,    \T1, \TAB, 4
+    ld.d    \T0,    \T1, 0
+    ld.d    \T1,    \T1, 8
+    xor     \ZHI,   \ZHI, \T0
+    xor     \ZLO,   \ZLO, \T1
+    srli.d  \SRC,   \SRC, 8
 .endm
 
-.macro GHASH528_FINAL TAB CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    andi    \TRED,   \ZLO, 0x0f
-    slli.d  \TRED,   \TRED, 4
-    alsl.d  \TRED,   \TRED, $s2, 3
-    ld.d    \TRED,   \TRED, 0
-    srli.d  \ZLO,    \ZLO, 4
-    bstrins.d \ZLO, \ZHI, 63, 60
-    srli.d  \ZHI,    \ZHI, 4
-    alsl.d  \TPTR,   \CUR, \TAB, 4
-    ld.d    \THI,    \TPTR, 0
-    ld.d    \TLO,    \TPTR, 8
-    xor     \ZHI,    \ZHI, \TRED
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
+.macro GHASH8B_FINAL TAB SRC ZHI ZLO T0 T1
+    andi    \T0,    \ZLO, 0xff
+    srli.d  \ZLO,   \ZLO, 8
+    bstrins.d \ZLO, \ZHI, 63, 56
+    srli.d  \ZHI,   \ZHI, 8
+    alsl.d  \T0,    \T0, $s2, 3
+    ld.d    \T0,    \T0, 0
+    xor     \ZHI,   \ZHI, \T0
+    andi    \T1,    \SRC, 0xff
+    alsl.d  \T1,    \T1, \TAB, 4
+    ld.d    \T0,    \T1, 0
+    ld.d    \T1,    \T1, 8
+    xor     \ZHI,   \ZHI, \T0
+    xor     \ZLO,   \ZLO, \T1
 .endm
 
-.macro GHASH528_INIT2
-    GHASH528_INIT $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17
-    GHASH528_INIT $s3, $r12, $r15, $r13, $r14, $r19, $r20
+.macro GHASH8B_INIT2
+    GHASH8B_INIT $s6, $r7,  $r8,  $r9,  $r16
+    GHASH8B_INIT $s3, $r12, $r13, $r14, $r19
 .endm
 
-.macro GHASH528_PRE2
-    GHASH528_PRE  $s7, $s8, $r10, $r8,  $r9,  $r16, $r17, $r18
-    GHASH528_PRE  $s4, $s5, $r15, $r13, $r14, $r19, $r20, $r21
+.macro GHASH8B_STEP2_LO
+    GHASH8B_STEP $s6, $r7,  $r8,  $r9,  $r16, $r17
+    GHASH8B_STEP $s3, $r12, $r13, $r14, $r19, $r20
 .endm
 
-.macro GHASH528_POST2_LO
-    GHASH528_POST $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_POST $s3, $r12, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.macro GHASH8B_STEP2_HI
+    GHASH8B_STEP $s6, $r6,  $r8,  $r9,  $r16, $r17
+    GHASH8B_STEP $s3, $r11, $r13, $r14, $r19, $r20
 .endm
 
-.macro GHASH528_POST2_HI
-    GHASH528_POST $s6, $r6,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_POST $s3, $r11, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
-.endm
-
-.macro GHASH528_FINAL2
-    GHASH528_FINAL $s6, $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_FINAL $s3, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.macro GHASH8B_FINAL2
+    GHASH8B_FINAL $s6, $r6,  $r8,  $r9,  $r16, $r17
+    GHASH8B_FINAL $s3, $r11, $r13, $r14, $r19, $r20
 .endm
 
 .section .rodata
@@ -188,7 +179,7 @@ Lk_sr:
     .hword 0xBBF0, 0xBA32, 0xB874, 0xB9B6, 0xBCF8, 0xBD3A, 0xBF7C, 0xBEBE
 
 # Pre-shifted reduction table: each entry = rem_8bit[i] << 48, stored as .dword
-# Eliminates slli.d 48 after each lookup in GHASH528_PRE/FINAL
+# Eliminates slli.d 48 after each lookup in GHASH8B_STEP/FINAL
 .align 4
 .Lrem_8bit_shl48:
     .dword 0x0000000000000000, 0x01C2000000000000, 0x0384000000000000, 0x0246000000000000
@@ -273,7 +264,13 @@ _vpaes_preheat:
     vldi      $vr18,0
     jirl      $zero,$ra,0
 
-# LASX preheat: load 256-bit (duplicated) constants + Lk_ipt/Lk_sbo + MC tables
+# LASX preheat: load 256-bit constants + Lk_ipt/Lk_sbo + MC forward/backward
+# Registers loaded:
+#   xvr9-15,18     VPAES constants (duplicated)
+#   xvr27/28       Lk_ipt[0/16]
+#   xvr29/30       Lk_sbo[0/16]
+#   xvr16,17,19,20 MC_forward[0..3]
+#   xvr21,22,23,24 MC_backward[0..3]
 .align 4
 _vpaes_lasx_preheat_gcm:
     la.local  $a6,Lk_s0F
@@ -331,18 +328,20 @@ loongarch64_vpaes_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_enc_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0           # Xi*
     ori     $s1,$a3,0           # AES key schedule
@@ -352,44 +351,17 @@ loongarch64_vpaes_gcm_encrypt:
     beqz    $s0,.Lgcm_enc_done
 
     # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
 
-    st.d    $s0,$sp,856         # save aligned_len for return
+    st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base
-    ori     $s4,$sp,0           # H shl4 bytes
-    addi.d  $s5,$sp,16          # H shr4 table
-    addi.d  $s6,$sp,272         # H^2 4-bit table
-    addi.d  $s7,$sp,528         # H^2 shl4 bytes
-    addi.d  $s8,$sp,544         # H^2 shr4 table
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
-    # Build H 528B helpers.
-    ori     $r14,$s3,0
-    ori     $r15,$s5,0
-    ori     $r16,$s4,0
-    li.d    $r20,16
-.Lprep_h_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Lprep_h_528
 
-    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # Compute raw H^2 using the 4-bit multiply sequence.
     # H.u[0..1] at $fp+16 are already BSWAP'd by CRYPTO_gcm128_init.
     # Feed them directly (without revb) so the byte-by-byte multiply
     # processes byte[15]→byte[0], matching gcm_ghash_4bit's order.
@@ -498,16 +470,166 @@ loongarch64_vpaes_gcm_encrypt:
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    # Expand raw H^2 into the 16-entry 4-bit table layout.
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s3 ──
+    st.d    $r0,$s3,0
+    st.d    $r0,$s3,8
+    st.d    $r12,$s3,128
+    st.d    $r13,$s3,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,64
+    st.d    $r13,$s3,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,32
+    st.d    $r13,$s3,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,16
+    st.d    $r13,$s3,24
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s3,48
+    st.d    $r15,$s3,56
+    ld.d    $r16,$s3,64
+    ld.d    $r17,$s3,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s3,80
+    st.d    $r15,$s3,88
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,96
+    st.d    $r15,$s3,104
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,112
+    st.d    $r15,$s3,120
+    ld.d    $r16,$s3,128
+    ld.d    $r17,$s3,136
+    ld.d    $r14,$s3,16
+    ld.d    $r15,$s3,24
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,144
+    st.d    $r15,$s3,152
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,160
+    st.d    $r15,$s3,168
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,176
+    st.d    $r15,$s3,184
+    ld.d    $r14,$s3,64
+    ld.d    $r15,$s3,72
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,192
+    st.d    $r15,$s3,200
+    ld.d    $r14,$s3,80
+    ld.d    $r15,$s3,88
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,208
+    st.d    $r15,$s3,216
+    ld.d    $r14,$s3,96
+    ld.d    $r15,$s3,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,224
+    st.d    $r15,$s3,232
+    ld.d    $r14,$s3,112
+    ld.d    $r15,$s3,120
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,240
+    st.d    $r15,$s3,248
+
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Lenc_h_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s3,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,-1
+    slti    $r16,$r20,16
+    beqz    $r16,.Lenc_h_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Lenc_h_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Lenc_h_8bit_fixup
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s6 ──
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
     st.d    $r12,$s6,128
     st.d    $r13,$s6,136
     li.d    $r21,0xe100000000000000
@@ -520,109 +642,139 @@ loongarch64_vpaes_gcm_encrypt:
     REDUCE1BIT $r12,$r13,$r14,$r15,$r21
     st.d    $r12,$s6,16
     st.d    $r13,$s6,24
-
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
     xor     $r14,$r12,$r14
     xor     $r15,$r13,$r15
     st.d    $r14,$s6,48
     st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
+    ld.d    $r16,$s6,64
+    ld.d    $r17,$s6,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s6,80
+    st.d    $r15,$s6,88
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,96
+    st.d    $r15,$s6,104
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,112
+    st.d    $r15,$s6,120
+    ld.d    $r16,$s6,128
+    ld.d    $r17,$s6,136
     ld.d    $r14,$s6,16
     ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,144
+    st.d    $r15,$s6,152
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,160
+    st.d    $r15,$s6,168
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,176
+    st.d    $r15,$s6,184
     ld.d    $r14,$s6,64
     ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,192
+    st.d    $r15,$s6,200
     ld.d    $r14,$s6,80
     ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,208
+    st.d    $r15,$s6,216
     ld.d    $r14,$s6,96
     ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,224
+    st.d    $r15,$s6,232
     ld.d    $r14,$s6,112
     ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,240
+    st.d    $r15,$s6,248
 
-    # Build H^2 528B helpers.
-    ori     $r14,$s6,0
-    ori     $r15,$s8,0
-    ori     $r16,$s7,0
-    li.d    $r20,16
-.Lprep_h2_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Lenc_h2_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s6,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
     addi.d  $r20,$r20,-1
-    bnez    $r20,.Lprep_h2_528
+    slti    $r16,$r20,16
+    beqz    $r16,.Lenc_h2_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Lenc_h2_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Lenc_h2_8bit_fixup
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # Preheat VPAES constants.
     ori     $a2,$s1,0
@@ -630,7 +782,7 @@ loongarch64_vpaes_gcm_encrypt:
 
     # Save MC table base for unrolled steady state.
     la.local $r16,Lk_mc_backward
-    st.d    $r16,$sp,832
+    st.d    $r16,$sp,128
 
     # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
     la.local $r16,Lk_ipt
@@ -645,7 +797,7 @@ loongarch64_vpaes_gcm_encrypt:
     ld.d    $r5,$fp,8
 
     # ─── warmup: encrypt pair 0 (unrolled, no GHASH) ──────────────
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -732,7 +884,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -812,7 +964,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -892,7 +1044,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -972,7 +1124,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -1052,7 +1204,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -1132,7 +1284,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -1212,7 +1364,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -1292,7 +1444,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -1372,7 +1524,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -1445,7 +1597,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -1506,7 +1658,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -1586,7 +1738,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -1666,7 +1818,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -1746,7 +1898,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -1826,7 +1978,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -1906,7 +2058,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -1986,7 +2138,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -2066,7 +2218,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -2146,7 +2298,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -2226,7 +2378,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -2306,7 +2458,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -2379,7 +2531,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,64
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -2440,7 +2592,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -2520,7 +2672,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -2600,7 +2752,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -2680,7 +2832,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -2760,7 +2912,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -2840,7 +2992,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -2920,7 +3072,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -3000,7 +3152,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -3080,7 +3232,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -3160,7 +3312,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -3240,7 +3392,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -3320,7 +3472,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 12  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -3400,7 +3552,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 13  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -3473,7 +3625,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -3482,8 +3634,8 @@ loongarch64_vpaes_gcm_encrypt:
 .Lwarm_after:
 
     # ── warmup after-body: xor-store, seed GHASH, INIT2, advance ──
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     vxor.v      $vr6,$vr6,$vr0
@@ -3492,8 +3644,8 @@ loongarch64_vpaes_gcm_encrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -3504,10 +3656,10 @@ loongarch64_vpaes_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
-    ld.w        $r16,$sp,848
+    GHASH8B_INIT2
+    ld.w        $r16,$sp,144
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vinsgr2vr.w $vr8,$r17,3
     addi.d      $s0,$s0,-32
@@ -3525,7 +3677,7 @@ loongarch64_vpaes_gcm_encrypt:
 
     # ── AES-128 self-contained loop ────────────────────────────────
 .Lgcm_loop_128:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -3534,7 +3686,7 @@ loongarch64_vpaes_gcm_encrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -3607,10 +3759,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -3638,8 +3789,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-front (rk+32) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3693,10 +3843,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -3724,8 +3873,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3779,7 +3927,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -3807,8 +3955,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-front (rk+64) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3862,10 +4009,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -3893,8 +4039,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -3948,10 +4093,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -3979,8 +4123,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-front (rk+96) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4034,10 +4177,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -4065,8 +4207,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-front (rk+112) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4120,10 +4261,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -4203,10 +4343,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -4234,8 +4373,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4289,10 +4427,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -4365,19 +4502,19 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     vxor.v      $vr6,$vr6,$vr0
@@ -4386,8 +4523,8 @@ loongarch64_vpaes_gcm_encrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -4398,14 +4535,14 @@ loongarch64_vpaes_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_128
     b           .Lgcm_drain
 
     # ── AES-192 self-contained loop ────────────────────────────────
 .Lgcm_loop_192:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -4414,7 +4551,7 @@ loongarch64_vpaes_gcm_encrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -4487,10 +4624,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -4518,8 +4654,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-front (rk+32) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4573,7 +4708,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -4601,8 +4736,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4656,10 +4790,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -4739,10 +4872,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -4770,8 +4902,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4825,10 +4956,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -4908,10 +5038,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -4939,8 +5068,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-front (rk+112) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -4994,7 +5122,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -5022,8 +5150,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-front (rk+128) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5077,10 +5204,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -5108,8 +5234,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5163,7 +5288,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -5191,8 +5316,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5246,10 +5370,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -5329,10 +5452,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -5405,19 +5527,19 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,64
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     vxor.v      $vr6,$vr6,$vr0
@@ -5426,8 +5548,8 @@ loongarch64_vpaes_gcm_encrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -5438,14 +5560,14 @@ loongarch64_vpaes_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_192
     b           .Lgcm_drain
 
     # ── AES-256 self-contained loop ────────────────────────────────
 .Lgcm_loop_256:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -5454,7 +5576,7 @@ loongarch64_vpaes_gcm_encrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -5527,10 +5649,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -5610,10 +5731,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -5641,8 +5761,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5696,7 +5815,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -5724,8 +5843,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-front (rk+64) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5779,7 +5897,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -5807,8 +5925,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -5862,10 +5979,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -5945,10 +6061,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -6028,10 +6143,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -6059,8 +6173,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-front (rk+128) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -6114,7 +6227,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -6142,8 +6255,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -6197,7 +6309,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -6225,8 +6337,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -6280,10 +6391,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -6363,10 +6473,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -6446,10 +6555,9 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 12  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -6477,8 +6585,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 13  half-front (rk+208) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -6532,7 +6639,7 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 13  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -6605,19 +6712,19 @@ loongarch64_vpaes_gcm_encrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     vxor.v      $vr6,$vr6,$vr0
@@ -6626,8 +6733,8 @@ loongarch64_vpaes_gcm_encrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -6638,7 +6745,7 @@ loongarch64_vpaes_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_256
     b           .Lgcm_drain
@@ -6646,14 +6753,12 @@ loongarch64_vpaes_gcm_encrypt:
     # ─── drain: finish last GHASH (non-interleaved) ─────────────────
 .Lgcm_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
@@ -6661,28 +6766,30 @@ loongarch64_vpaes_gcm_encrypt:
     st.d        $r4,$fp,0
     st.d        $r5,$fp,8
     # Write counter back to ivec.
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_enc_done:
-    ld.d    $a0,$sp,856         # return aligned_len
+    ld.d    $a0,$sp,152         # return aligned_len
 
 .Lgcm_epilogue:
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_enc_ret0:
@@ -6698,18 +6805,20 @@ loongarch64_vpaes_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_dec_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0           # Xi*
     ori     $s1,$a3,0           # AES key schedule
@@ -6719,44 +6828,17 @@ loongarch64_vpaes_gcm_decrypt:
     beqz    $s0,.Lgcm_dec_done
 
     # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
 
-    st.d    $s0,$sp,856         # save aligned_len for return
+    st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base
-    ori     $s4,$sp,0           # H shl4 bytes
-    addi.d  $s5,$sp,16          # H shr4 table
-    addi.d  $s6,$sp,272         # H^2 4-bit table
-    addi.d  $s7,$sp,528         # H^2 shl4 bytes
-    addi.d  $s8,$sp,544         # H^2 shr4 table
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
-    # Build H 528B helpers (decrypt).
-    ori     $r14,$s3,0
-    ori     $r15,$s5,0
-    ori     $r16,$s4,0
-    li.d    $r20,16
-.Ldec_prep_h_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Ldec_prep_h_528
 
-    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # Compute raw H^2 using the 4-bit multiply sequence.
     la.local $t7,.Lrem_4bit
     ld.d    $r6,$fp,16
     ld.d    $r7,$fp,24
@@ -6862,16 +6944,166 @@ loongarch64_vpaes_gcm_decrypt:
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    # Expand raw H^2 into the 16-entry 4-bit table layout.
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s3 ──
+    st.d    $r0,$s3,0
+    st.d    $r0,$s3,8
+    st.d    $r12,$s3,128
+    st.d    $r13,$s3,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,64
+    st.d    $r13,$s3,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,32
+    st.d    $r13,$s3,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,16
+    st.d    $r13,$s3,24
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s3,48
+    st.d    $r15,$s3,56
+    ld.d    $r16,$s3,64
+    ld.d    $r17,$s3,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s3,80
+    st.d    $r15,$s3,88
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,96
+    st.d    $r15,$s3,104
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,112
+    st.d    $r15,$s3,120
+    ld.d    $r16,$s3,128
+    ld.d    $r17,$s3,136
+    ld.d    $r14,$s3,16
+    ld.d    $r15,$s3,24
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,144
+    st.d    $r15,$s3,152
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,160
+    st.d    $r15,$s3,168
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,176
+    st.d    $r15,$s3,184
+    ld.d    $r14,$s3,64
+    ld.d    $r15,$s3,72
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,192
+    st.d    $r15,$s3,200
+    ld.d    $r14,$s3,80
+    ld.d    $r15,$s3,88
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,208
+    st.d    $r15,$s3,216
+    ld.d    $r14,$s3,96
+    ld.d    $r15,$s3,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,224
+    st.d    $r15,$s3,232
+    ld.d    $r14,$s3,112
+    ld.d    $r15,$s3,120
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,240
+    st.d    $r15,$s3,248
+
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Lgen_h_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s3,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,-1
+    slti    $r16,$r20,16
+    beqz    $r16,.Lgen_h_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Lgen_h_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Lgen_h_8bit_fixup
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s6 ──
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
     st.d    $r12,$s6,128
     st.d    $r13,$s6,136
     li.d    $r21,0xe100000000000000
@@ -6884,109 +7116,139 @@ loongarch64_vpaes_gcm_decrypt:
     REDUCE1BIT $r12,$r13,$r14,$r15,$r21
     st.d    $r12,$s6,16
     st.d    $r13,$s6,24
-
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
     xor     $r14,$r12,$r14
     xor     $r15,$r13,$r15
     st.d    $r14,$s6,48
     st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
+    ld.d    $r16,$s6,64
+    ld.d    $r17,$s6,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s6,80
+    st.d    $r15,$s6,88
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,96
+    st.d    $r15,$s6,104
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,112
+    st.d    $r15,$s6,120
+    ld.d    $r16,$s6,128
+    ld.d    $r17,$s6,136
     ld.d    $r14,$s6,16
     ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,144
+    st.d    $r15,$s6,152
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,160
+    st.d    $r15,$s6,168
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,176
+    st.d    $r15,$s6,184
     ld.d    $r14,$s6,64
     ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,192
+    st.d    $r15,$s6,200
     ld.d    $r14,$s6,80
     ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,208
+    st.d    $r15,$s6,216
     ld.d    $r14,$s6,96
     ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,224
+    st.d    $r15,$s6,232
     ld.d    $r14,$s6,112
     ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,240
+    st.d    $r15,$s6,248
 
-    # Build H^2 528B helpers (decrypt).
-    ori     $r14,$s6,0
-    ori     $r15,$s8,0
-    ori     $r16,$s7,0
-    li.d    $r20,16
-.Ldec_prep_h2_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Lgen_h2_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s6,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
     addi.d  $r20,$r20,-1
-    bnez    $r20,.Ldec_prep_h2_528
+    slti    $r16,$r20,16
+    beqz    $r16,.Lgen_h2_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Lgen_h2_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Lgen_h2_8bit_fixup
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # Preheat VPAES constants.
     ori     $a2,$s1,0
@@ -6994,7 +7256,7 @@ loongarch64_vpaes_gcm_decrypt:
 
     # Save MC table base for unrolled steady state.
     la.local $r16,Lk_mc_backward
-    st.d    $r16,$sp,832
+    st.d    $r16,$sp,128
 
     # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
     la.local $r16,Lk_ipt
@@ -7009,7 +7271,7 @@ loongarch64_vpaes_gcm_decrypt:
     ld.d    $r5,$fp,8
 
     # ─── warmup: decrypt pair 0 (unrolled, no GHASH) ──────────────
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -7096,7 +7358,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -7176,7 +7438,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -7256,7 +7518,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -7336,7 +7598,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -7416,7 +7678,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -7496,7 +7758,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -7576,7 +7838,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -7656,7 +7918,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -7736,7 +7998,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -7809,7 +8071,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -7870,7 +8132,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -7950,7 +8212,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -8030,7 +8292,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -8110,7 +8372,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -8190,7 +8452,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -8270,7 +8532,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -8350,7 +8612,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -8430,7 +8692,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -8510,7 +8772,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -8590,7 +8852,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -8670,7 +8932,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -8743,7 +9005,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,64
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -8804,7 +9066,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -8884,7 +9146,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -8964,7 +9226,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -9044,7 +9306,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -9124,7 +9386,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -9204,7 +9466,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -9284,7 +9546,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -9364,7 +9626,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -9444,7 +9706,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -9524,7 +9786,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -9604,7 +9866,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -9684,7 +9946,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 12  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -9764,7 +10026,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── warmup round 13  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -9837,7 +10099,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
@@ -9846,8 +10108,8 @@ loongarch64_vpaes_gcm_decrypt:
 .Ldec_warm_after:
 
     # ── warmup after-body: xor-store+seed (decrypt), INIT2, advance ──
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     # Seed GHASH from ciphertext (input, before XOR)
@@ -9869,12 +10131,12 @@ loongarch64_vpaes_gcm_decrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
-    ld.w        $r16,$sp,848
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
+    ld.w        $r16,$sp,144
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vinsgr2vr.w $vr8,$r17,3
     addi.d      $s0,$s0,-32
@@ -9892,7 +10154,7 @@ loongarch64_vpaes_gcm_decrypt:
 
     # ── AES-128 decrypt self-contained loop ────────────────────────
 .Lgcm_dec_loop_128:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -9901,7 +10163,7 @@ loongarch64_vpaes_gcm_decrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -9974,10 +10236,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -10005,8 +10266,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-front (rk+32) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10060,10 +10320,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -10091,8 +10350,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10146,7 +10404,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -10174,8 +10432,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-front (rk+64) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10229,10 +10486,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -10260,8 +10516,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10315,10 +10570,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -10346,8 +10600,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-front (rk+96) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10401,10 +10654,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -10432,8 +10684,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-front (rk+112) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10487,10 +10738,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -10570,10 +10820,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -10601,8 +10850,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10656,10 +10904,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -10732,19 +10979,19 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     # Seed GHASH from ciphertext (input, before XOR)
@@ -10766,16 +11013,16 @@ loongarch64_vpaes_gcm_decrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_128
     b           .Lgcm_dec_drain
 
     # ── AES-192 decrypt self-contained loop ────────────────────────
 .Lgcm_dec_loop_192:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -10784,7 +11031,7 @@ loongarch64_vpaes_gcm_decrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -10857,10 +11104,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -10888,8 +11134,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-front (rk+32) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -10943,7 +11188,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -10971,8 +11216,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11026,10 +11270,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -11109,10 +11352,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -11140,8 +11382,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11195,10 +11436,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -11278,10 +11518,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -11309,8 +11548,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-front (rk+112) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11364,7 +11602,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -11392,8 +11630,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-front (rk+128) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11447,10 +11684,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -11478,8 +11714,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11533,7 +11768,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -11561,8 +11796,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -11616,10 +11850,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -11699,10 +11932,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -11775,19 +12007,19 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,64
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     # Seed GHASH from ciphertext (input, before XOR)
@@ -11809,16 +12041,16 @@ loongarch64_vpaes_gcm_decrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_192
     b           .Lgcm_dec_drain
 
     # ── AES-256 decrypt self-contained loop ────────────────────────
 .Lgcm_dec_loop_256:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -11827,7 +12059,7 @@ loongarch64_vpaes_gcm_decrypt:
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr5,$s1,0
@@ -11900,10 +12132,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 1  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -11983,10 +12214,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 2  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -12014,8 +12244,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 3  half-front (rk+48) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12069,7 +12298,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 3  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -12097,8 +12326,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 4  half-front (rk+64) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12152,7 +12380,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 4  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -12180,8 +12408,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-front (rk+80) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12235,10 +12462,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 5  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -12318,10 +12544,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── round 6  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -12401,10 +12626,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 7  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -12432,8 +12656,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 8  half-front (rk+128) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12487,7 +12710,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 8  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -12515,8 +12738,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 9  half-front (rk+144) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12570,7 +12792,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 9  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -12598,8 +12820,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-front (rk+160) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12653,10 +12874,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 10  half-back  (mc_idx=2) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-32
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,32
@@ -12736,10 +12956,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 11  half-back  (mc_idx=3) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-16
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,48
@@ -12819,10 +13038,9 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── round 12  half-back  (mc_idx=0) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-64
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,0
@@ -12850,8 +13068,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr3
     vxor.v    $vr19,$vr19,$vr22
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── round 13  half-front (rk+208) ──
     vori.b    $vr1,$vr9,0
     vori.b    $vr20,$vr9,0
@@ -12905,7 +13122,7 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     # ── round 13  half-back  (mc_idx=1) ──
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,-48
     vori.b    $vr5,$vr15,0
     vld       $vr4,$r16,16
@@ -12978,19 +13195,19 @@ loongarch64_vpaes_gcm_decrypt:
     vxor.v    $vr23,$vr23,$vr5
     vshuf.b   $vr0,$vr18,$vr30,$vr3
     vshuf.b   $vr19,$vr18,$vr30,$vr22
-    ld.d      $r16,$sp,832
+    ld.d      $r16,$sp,128
     vld       $vr1,$r16,96
     vxor.v    $vr0,$vr0,$vr4
     vxor.v    $vr19,$vr19,$vr23
     vshuf.b   $vr0,$vr18,$vr0,$vr1
     vshuf.b   $vr19,$vr18,$vr19,$vr1
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     # Seed GHASH from ciphertext (input, before XOR)
@@ -13012,9 +13229,9 @@ loongarch64_vpaes_gcm_decrypt:
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_256
     b           .Lgcm_dec_drain
@@ -13022,14 +13239,12 @@ loongarch64_vpaes_gcm_decrypt:
     # ─── drain: finish last GHASH (non-interleaved) ─────────────────
 .Lgcm_dec_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
@@ -13037,28 +13252,30 @@ loongarch64_vpaes_gcm_decrypt:
     st.d        $r4,$fp,0
     st.d        $r5,$fp,8
     # Write counter back to ivec.
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_dec_done:
-    ld.d    $a0,$sp,856         # return aligned_len
+    ld.d    $a0,$sp,152         # return aligned_len
 
 .Lgcm_dec_epilogue:
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_dec_ret0:
@@ -13074,18 +13291,20 @@ loongarch64_vpaes_lasx_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_enc_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0
     ori     $s1,$a3,0
@@ -13093,41 +13312,14 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     bstrins.d $s0,$zero,4,0
     beqz    $s0,.Lgcm_lasx_enc_done
 
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
-    st.d    $s0,$sp,856
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
+    st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32
-    ori     $s4,$sp,0
-    addi.d  $s5,$sp,16
-    addi.d  $s6,$sp,272
-    addi.d  $s7,$sp,528
-    addi.d  $s8,$sp,544
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
-    # Build H 528B helpers (LASX enc).
-    ori     $r14,$s3,0
-    ori     $r15,$s5,0
-    ori     $r16,$s4,0
-    li.d    $r20,16
-.Llasx_enc_prep_h_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Llasx_enc_prep_h_528
 
     la.local $t7,.Lrem_4bit
     ld.d    $r6,$fp,16
@@ -13234,15 +13426,166 @@ loongarch64_vpaes_lasx_gcm_encrypt:
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s3 ──
+    st.d    $r0,$s3,0
+    st.d    $r0,$s3,8
+    st.d    $r12,$s3,128
+    st.d    $r13,$s3,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,64
+    st.d    $r13,$s3,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,32
+    st.d    $r13,$s3,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,16
+    st.d    $r13,$s3,24
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s3,48
+    st.d    $r15,$s3,56
+    ld.d    $r16,$s3,64
+    ld.d    $r17,$s3,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s3,80
+    st.d    $r15,$s3,88
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,96
+    st.d    $r15,$s3,104
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,112
+    st.d    $r15,$s3,120
+    ld.d    $r16,$s3,128
+    ld.d    $r17,$s3,136
+    ld.d    $r14,$s3,16
+    ld.d    $r15,$s3,24
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,144
+    st.d    $r15,$s3,152
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,160
+    st.d    $r15,$s3,168
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,176
+    st.d    $r15,$s3,184
+    ld.d    $r14,$s3,64
+    ld.d    $r15,$s3,72
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,192
+    st.d    $r15,$s3,200
+    ld.d    $r14,$s3,80
+    ld.d    $r15,$s3,88
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,208
+    st.d    $r15,$s3,216
+    ld.d    $r14,$s3,96
+    ld.d    $r15,$s3,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,224
+    st.d    $r15,$s3,232
+    ld.d    $r14,$s3,112
+    ld.d    $r15,$s3,120
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,240
+    st.d    $r15,$s3,248
+
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Llasx_enc_h_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s3,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,-1
+    slti    $r16,$r20,16
+    beqz    $r16,.Llasx_enc_h_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Llasx_enc_h_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Llasx_enc_h_8bit_fixup
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s6 ──
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
     st.d    $r12,$s6,128
     st.d    $r13,$s6,136
     li.d    $r21,0xe100000000000000
@@ -13255,109 +13598,140 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     REDUCE1BIT $r12,$r13,$r14,$r15,$r21
     st.d    $r12,$s6,16
     st.d    $r13,$s6,24
-
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
     xor     $r14,$r12,$r14
     xor     $r15,$r13,$r15
     st.d    $r14,$s6,48
     st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
+    ld.d    $r16,$s6,64
+    ld.d    $r17,$s6,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s6,80
+    st.d    $r15,$s6,88
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,96
+    st.d    $r15,$s6,104
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,112
+    st.d    $r15,$s6,120
+    ld.d    $r16,$s6,128
+    ld.d    $r17,$s6,136
     ld.d    $r14,$s6,16
     ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,144
+    st.d    $r15,$s6,152
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,160
+    st.d    $r15,$s6,168
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,176
+    st.d    $r15,$s6,184
     ld.d    $r14,$s6,64
     ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,192
+    st.d    $r15,$s6,200
     ld.d    $r14,$s6,80
     ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,208
+    st.d    $r15,$s6,216
     ld.d    $r14,$s6,96
     ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,224
+    st.d    $r15,$s6,232
     ld.d    $r14,$s6,112
     ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,240
+    st.d    $r15,$s6,248
 
-    # Build H^2 528B helpers (LASX enc).
-    ori     $r14,$s6,0
-    ori     $r15,$s8,0
-    ori     $r16,$s7,0
-    li.d    $r20,16
-.Llasx_enc_prep_h2_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Llasx_enc_h2_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s6,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
     addi.d  $r20,$r20,-1
-    bnez    $r20,.Llasx_enc_prep_h2_528
+    slti    $r16,$r20,16
+    beqz    $r16,.Llasx_enc_h2_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Llasx_enc_h2_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Llasx_enc_h2_8bit_fixup
+
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # LASX preheat (constants + Lk_ipt/Lk_sbo + MC tables).
     bl      _vpaes_lasx_preheat_gcm
@@ -13367,7 +13741,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     ld.d    $r5,$fp,8
 
     # ─── LASX warmup: encrypt pair 0 (no GHASH) ──────────────────
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -14461,15 +14835,15 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
 .Llasx_enc_warm_after:
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     xvxor.v     $xr6,$xr6,$xr0
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -14481,10 +14855,10 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
-    ld.w        $r16,$sp,848
+    GHASH8B_INIT2
+    ld.w        $r16,$sp,144
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vinsgr2vr.w $vr8,$r17,3
     addi.d      $s0,$s0,-32
@@ -14500,7 +14874,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     b           .Lgcm_lasx_enc_done
 
 .Lgcm_lasx_enc_loop_128:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -14510,7 +14884,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -14543,8 +14917,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14556,8 +14929,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-front (rk+32) ──
     vld       $vr26,$s1,32
     xvandn.v  $xr1,$xr9,$xr0
@@ -14579,8 +14951,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14592,8 +14963,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -14625,8 +14995,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-front (rk+64) ──
     vld       $vr26,$s1,64
     xvandn.v  $xr1,$xr9,$xr0
@@ -14648,8 +15017,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14661,8 +15029,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -14684,8 +15051,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14697,8 +15063,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-front (rk+96) ──
     vld       $vr26,$s1,96
     xvandn.v  $xr1,$xr9,$xr0
@@ -14720,8 +15085,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14733,8 +15097,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-front (rk+112) ──
     vld       $vr26,$s1,112
     xvandn.v  $xr1,$xr9,$xr0
@@ -14756,8 +15119,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14789,8 +15151,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14802,8 +15163,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -14825,8 +15185,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 9  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14856,20 +15215,20 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     xvxor.v     $xr6,$xr6,$xr0
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -14881,13 +15240,13 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_128
     b           .Lgcm_lasx_enc_drain
 
 .Lgcm_lasx_enc_loop_192:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -14897,7 +15256,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -14930,8 +15289,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -14943,8 +15301,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-front (rk+32) ──
     vld       $vr26,$s1,32
     xvandn.v  $xr1,$xr9,$xr0
@@ -14976,8 +15333,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -14999,8 +15355,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15032,8 +15387,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15045,8 +15399,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -15068,8 +15421,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15101,8 +15453,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15114,8 +15465,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-front (rk+112) ──
     vld       $vr26,$s1,112
     xvandn.v  $xr1,$xr9,$xr0
@@ -15147,8 +15497,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-front (rk+128) ──
     vld       $vr26,$s1,128
     xvandn.v  $xr1,$xr9,$xr0
@@ -15170,8 +15519,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15183,8 +15531,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -15216,8 +15563,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-front (rk+160) ──
     vld       $vr26,$s1,160
     xvandn.v  $xr1,$xr9,$xr0
@@ -15239,8 +15585,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15272,8 +15617,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 11  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15303,20 +15647,20 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     xvxor.v     $xr6,$xr6,$xr0
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -15328,13 +15672,13 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_192
     b           .Lgcm_lasx_enc_drain
 
 .Lgcm_lasx_enc_loop_256:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -15344,7 +15688,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -15377,8 +15721,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15410,8 +15753,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15423,8 +15765,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -15456,8 +15797,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-front (rk+64) ──
     vld       $vr26,$s1,64
     xvandn.v  $xr1,$xr9,$xr0
@@ -15489,8 +15829,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -15512,8 +15851,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15545,8 +15883,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15578,8 +15915,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15591,8 +15927,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-front (rk+128) ──
     vld       $vr26,$s1,128
     xvandn.v  $xr1,$xr9,$xr0
@@ -15624,8 +15959,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -15657,8 +15991,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-front (rk+160) ──
     vld       $vr26,$s1,160
     xvandn.v  $xr1,$xr9,$xr0
@@ -15680,8 +16013,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15713,8 +16045,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 11  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15746,8 +16077,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 12  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -15759,8 +16089,7 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 13  half-front (rk+208) ──
     vld       $vr26,$s1,208
     xvandn.v  $xr1,$xr9,$xr0
@@ -15810,20 +16139,20 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     xvxor.v     $xr6,$xr6,$xr0
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
     vpickve2gr.d $r16,$vr6,0
     vpickve2gr.d $r17,$vr6,1
     xor         $r4,$r4,$r16
@@ -15835,48 +16164,48 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     revb.d      $r7,$r5
     revb.d      $r11,$r11
     revb.d      $r12,$r12
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_256
     b           .Lgcm_lasx_enc_drain
 
 .Lgcm_lasx_enc_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
     st.d        $r4,$fp,0
     st.d        $r5,$fp,8
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_lasx_enc_done:
-    ld.d    $a0,$sp,856
+    ld.d    $a0,$sp,152
 
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_enc_ret0:
@@ -15892,18 +16221,20 @@ loongarch64_vpaes_lasx_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_dec_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0
     ori     $s1,$a3,0
@@ -15911,41 +16242,14 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     bstrins.d $s0,$zero,4,0
     beqz    $s0,.Lgcm_lasx_dec_done
 
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
-    st.d    $s0,$sp,856
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
+    st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32
-    ori     $s4,$sp,0
-    addi.d  $s5,$sp,16
-    addi.d  $s6,$sp,272
-    addi.d  $s7,$sp,528
-    addi.d  $s8,$sp,544
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
-    # Build H 528B helpers (LASX dec).
-    ori     $r14,$s3,0
-    ori     $r15,$s5,0
-    ori     $r16,$s4,0
-    li.d    $r20,16
-.Llasx_dec_prep_h_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
-    addi.d  $r20,$r20,-1
-    bnez    $r20,.Llasx_dec_prep_h_528
 
     la.local $t7,.Lrem_4bit
     ld.d    $r6,$fp,16
@@ -16052,15 +16356,166 @@ loongarch64_vpaes_lasx_gcm_decrypt:
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s3 ──
+    st.d    $r0,$s3,0
+    st.d    $r0,$s3,8
+    st.d    $r12,$s3,128
+    st.d    $r13,$s3,136
+    li.d    $r21,0xe100000000000000
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,64
+    st.d    $r13,$s3,72
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,32
+    st.d    $r13,$s3,40
+    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
+    st.d    $r12,$s3,16
+    st.d    $r13,$s3,24
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r12,$r14
+    xor     $r15,$r13,$r15
+    st.d    $r14,$s3,48
+    st.d    $r15,$s3,56
+    ld.d    $r16,$s3,64
+    ld.d    $r17,$s3,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s3,80
+    st.d    $r15,$s3,88
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,96
+    st.d    $r15,$s3,104
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,112
+    st.d    $r15,$s3,120
+    ld.d    $r16,$s3,128
+    ld.d    $r17,$s3,136
+    ld.d    $r14,$s3,16
+    ld.d    $r15,$s3,24
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,144
+    st.d    $r15,$s3,152
+    ld.d    $r14,$s3,32
+    ld.d    $r15,$s3,40
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,160
+    st.d    $r15,$s3,168
+    ld.d    $r14,$s3,48
+    ld.d    $r15,$s3,56
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,176
+    st.d    $r15,$s3,184
+    ld.d    $r14,$s3,64
+    ld.d    $r15,$s3,72
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,192
+    st.d    $r15,$s3,200
+    ld.d    $r14,$s3,80
+    ld.d    $r15,$s3,88
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,208
+    st.d    $r15,$s3,216
+    ld.d    $r14,$s3,96
+    ld.d    $r15,$s3,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,224
+    st.d    $r15,$s3,232
+    ld.d    $r14,$s3,112
+    ld.d    $r15,$s3,120
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s3,240
+    st.d    $r15,$s3,248
+
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Llasx_dec_h_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s3,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,-1
+    slti    $r16,$r20,16
+    beqz    $r16,.Llasx_dec_h_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Llasx_dec_h_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s3,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Llasx_dec_h_8bit_fixup
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+    # ── Phase 1: Build 4-bit table T4[0..15] at $s6 ──
+    st.d    $r0,$s6,0
+    st.d    $r0,$s6,8
     st.d    $r12,$s6,128
     st.d    $r13,$s6,136
     li.d    $r21,0xe100000000000000
@@ -16073,109 +16528,140 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     REDUCE1BIT $r12,$r13,$r14,$r15,$r21
     st.d    $r12,$s6,16
     st.d    $r13,$s6,24
-
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
     xor     $r14,$r12,$r14
     xor     $r15,$r13,$r15
     st.d    $r14,$s6,48
     st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
+    ld.d    $r16,$s6,64
+    ld.d    $r17,$s6,72
+    xor     $r14,$r16,$r12
+    xor     $r15,$r17,$r13
+    st.d    $r14,$s6,80
+    st.d    $r15,$s6,88
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,96
+    st.d    $r15,$s6,104
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,112
+    st.d    $r15,$s6,120
+    ld.d    $r16,$s6,128
+    ld.d    $r17,$s6,136
     ld.d    $r14,$s6,16
     ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,144
+    st.d    $r15,$s6,152
     ld.d    $r14,$s6,32
     ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,160
+    st.d    $r15,$s6,168
     ld.d    $r14,$s6,48
     ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,176
+    st.d    $r15,$s6,184
     ld.d    $r14,$s6,64
     ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,192
+    st.d    $r15,$s6,200
     ld.d    $r14,$s6,80
     ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,208
+    st.d    $r15,$s6,216
     ld.d    $r14,$s6,96
     ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,224
+    st.d    $r15,$s6,232
     ld.d    $r14,$s6,112
     ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    xor     $r14,$r16,$r14
+    xor     $r15,$r17,$r15
+    st.d    $r14,$s6,240
+    st.d    $r15,$s6,248
 
-    # Build H^2 528B helpers (LASX dec).
-    ori     $r14,$s6,0
-    ori     $r15,$s8,0
-    ori     $r16,$s7,0
-    li.d    $r20,16
-.Llasx_dec_prep_h2_528:
-    ld.d    $r17,$r14,0
-    ld.d    $r18,$r14,8
-    andi    $r19,$r18,0x0f
-    slli.d  $r19,$r19,4
-    st.b    $r19,$r16,0
-    slli.d  $r21,$r17,60
-    srli.d  $r18,$r18,4
-    or      $r18,$r18,$r21
-    srli.d  $r17,$r17,4
-    st.d    $r17,$r15,0
-    st.d    $r18,$r15,8
-    addi.d  $r14,$r14,16
-    addi.d  $r15,$r15,16
-    addi.d  $r16,$r16,1
+    # ── Phase 2: Build T8[16..255] from T4[0..15] ──
+    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}
+    la.local $r21,.Lrem_4bit
+    ori     $r20,$r0,255
+.Llasx_dec_h2_8bit_loop:
+    andi    $r16,$r20,0x0f
+    srli.d  $r17,$r20,4
+    slli.d  $r16,$r16,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    slli.d  $r17,$r17,4
+    add.d   $r17,$s6,$r17
+    ld.d    $r14,$r17,0
+    ld.d    $r15,$r17,8
+    xor     $r12,$r12,$r14
+    xor     $r13,$r13,$r15
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
     addi.d  $r20,$r20,-1
-    bnez    $r20,.Llasx_dec_prep_h2_528
+    slti    $r16,$r20,16
+    beqz    $r16,.Llasx_dec_h2_8bit_loop
+
+    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──
+    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})
+    ori     $r20,$r0,0
+.Llasx_dec_h2_8bit_fixup:
+    slli.d  $r16,$r20,4
+    add.d   $r16,$s6,$r16
+    ld.d    $r12,$r16,0
+    ld.d    $r13,$r16,8
+    andi    $r18,$r13,0x0f
+    slli.d  $r18,$r18,3
+    add.d   $r18,$r21,$r18
+    ld.d    $r18,$r18,0
+    slli.d  $r19,$r12,60
+    srli.d  $r13,$r13,4
+    or      $r13,$r13,$r19
+    srli.d  $r12,$r12,4
+    xor     $r12,$r12,$r18
+    st.d    $r12,$r16,0
+    st.d    $r13,$r16,8
+    addi.d  $r20,$r20,1
+    slti    $r16,$r20,16
+    bnez    $r16,.Llasx_dec_h2_8bit_fixup
+
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # LASX preheat.
     bl      _vpaes_lasx_preheat_gcm
@@ -16184,7 +16670,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     ld.d    $r5,$fp,8
 
     # ─── LASX warmup: decrypt pair 0 (no GHASH) ──────────────────
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -17278,8 +17764,8 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
 .Llasx_dec_warm_after:
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     # Seed GHASH from ciphertext (before XOR)
     vpickve2gr.d $r18,$vr6,0
@@ -17298,12 +17784,12 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
-    ld.w        $r16,$sp,848
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
+    ld.w        $r16,$sp,144
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vinsgr2vr.w $vr8,$r17,3
     addi.d      $s0,$s0,-32
@@ -17319,7 +17805,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     b           .Lgcm_lasx_dec_done
 
 .Lgcm_lasx_dec_loop_128:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -17329,7 +17815,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -17362,8 +17848,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17375,8 +17860,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-front (rk+32) ──
     vld       $vr26,$s1,32
     xvandn.v  $xr1,$xr9,$xr0
@@ -17398,8 +17882,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17411,8 +17894,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -17444,8 +17926,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-front (rk+64) ──
     vld       $vr26,$s1,64
     xvandn.v  $xr1,$xr9,$xr0
@@ -17467,8 +17948,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17480,8 +17960,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -17503,8 +17982,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17516,8 +17994,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-front (rk+96) ──
     vld       $vr26,$s1,96
     xvandn.v  $xr1,$xr9,$xr0
@@ -17539,8 +18016,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17552,8 +18028,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-front (rk+112) ──
     vld       $vr26,$s1,112
     xvandn.v  $xr1,$xr9,$xr0
@@ -17575,8 +18050,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17608,8 +18082,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17621,8 +18094,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -17644,8 +18116,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 9  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17675,13 +18146,13 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     # Seed GHASH from ciphertext (before XOR)
     vpickve2gr.d $r18,$vr6,0
@@ -17700,15 +18171,15 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_128
     b           .Lgcm_lasx_dec_drain
 
 .Lgcm_lasx_dec_loop_192:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -17718,7 +18189,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -17751,8 +18222,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17764,8 +18234,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-front (rk+32) ──
     vld       $vr26,$s1,32
     xvandn.v  $xr1,$xr9,$xr0
@@ -17797,8 +18266,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -17820,8 +18288,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17853,8 +18320,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17866,8 +18332,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -17889,8 +18354,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17922,8 +18386,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -17935,8 +18398,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-front (rk+112) ──
     vld       $vr26,$s1,112
     xvandn.v  $xr1,$xr9,$xr0
@@ -17968,8 +18430,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-front (rk+128) ──
     vld       $vr26,$s1,128
     xvandn.v  $xr1,$xr9,$xr0
@@ -17991,8 +18452,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18004,8 +18464,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -18037,8 +18496,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-front (rk+160) ──
     vld       $vr26,$s1,160
     xvandn.v  $xr1,$xr9,$xr0
@@ -18060,8 +18518,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18093,8 +18550,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 11  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18124,13 +18580,13 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     # Seed GHASH from ciphertext (before XOR)
     vpickve2gr.d $r18,$vr6,0
@@ -18149,15 +18605,15 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_192
     b           .Lgcm_lasx_dec_drain
 
 .Lgcm_lasx_dec_loop_256:
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -18167,7 +18623,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     vinsgr2vr.w $vr7,$r17,3
     xvpermi.q   $xr0,$xr7,0x02
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
     vld       $vr26,$s1,0
@@ -18200,8 +18656,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 1 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 1  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18233,8 +18688,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 2 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 2  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18246,8 +18700,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr19
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 3 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 3  half-front (rk+48) ──
     vld       $vr26,$s1,48
     xvandn.v  $xr1,$xr9,$xr0
@@ -18279,8 +18732,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 4 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 4  half-front (rk+64) ──
     vld       $vr26,$s1,64
     xvandn.v  $xr1,$xr9,$xr0
@@ -18312,8 +18764,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 5 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-front (rk+80) ──
     vld       $vr26,$s1,80
     xvandn.v  $xr1,$xr9,$xr0
@@ -18335,8 +18786,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 6 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 5  half-back  (mc_idx=1) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18368,8 +18818,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 7 (LO)
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     # ── LASX round 6  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18401,8 +18850,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 8 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 7  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18414,8 +18862,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr20
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 9 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 8  half-front (rk+128) ──
     vld       $vr26,$s1,128
     xvandn.v  $xr1,$xr9,$xr0
@@ -18447,8 +18894,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 10 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 9  half-front (rk+144) ──
     vld       $vr26,$s1,144
     xvandn.v  $xr1,$xr9,$xr0
@@ -18480,8 +18926,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr17
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 11 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-front (rk+160) ──
     vld       $vr26,$s1,160
     xvandn.v  $xr1,$xr9,$xr0
@@ -18503,8 +18948,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 12 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 10  half-back  (mc_idx=2) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18536,8 +18980,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 13 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 11  half-back  (mc_idx=3) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18569,8 +19012,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr26
     xvxor.v   $xr0,$xr0,$xr4
     # GHASH step 14 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_STEP2_HI
     # ── LASX round 12  half-back  (mc_idx=0) ──
     xvshuf.b  $xr5,$xr18,$xr15,$xr2
     xvshuf.b  $xr2,$xr18,$xr14,$xr3
@@ -18582,8 +19024,7 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvshuf.b  $xr0,$xr18,$xr0,$xr16
     xvxor.v   $xr0,$xr0,$xr3
     # GHASH step 15 (HI)
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    GHASH8B_FINAL2
     # ── LASX round 13  half-front (rk+208) ──
     vld       $vr26,$s1,208
     xvandn.v  $xr1,$xr9,$xr0
@@ -18633,13 +19074,13 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvxor.v   $xr4,$xr4,$xr31
     xvxor.v   $xr0,$xr0,$xr4
     xvshuf.b  $xr0,$xr18,$xr0,$xr25
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     # Seed GHASH from ciphertext (before XOR)
     vpickve2gr.d $r18,$vr6,0
@@ -18658,50 +19099,50 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
-    GHASH528_INIT2
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_256
     b           .Lgcm_lasx_dec_drain
 
 .Lgcm_lasx_dec_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
     xor         $r8,$r8,$r13
     xor         $r9,$r9,$r14
     revb.d      $r4,$r8
     revb.d      $r5,$r9
     st.d        $r4,$fp,0
     st.d        $r5,$fp,8
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
     vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_lasx_dec_done:
-    ld.d    $a0,$sp,856
+    ld.d    $a0,$sp,152
 
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_dec_ret0:

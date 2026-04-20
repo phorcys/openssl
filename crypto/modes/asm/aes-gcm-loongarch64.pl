@@ -59,11 +59,8 @@
 #   s1  round-key base
 #   s2  rem_8bit table
 #   s3  H 4-bit table
-#   s4  H shl4 bytes
-#   s5  H shr4 table
-#   s6  H^2 4-bit table
-#   s7  H^2 shl4 bytes
-#   s8  H^2 shr4 table
+#   s3  H 8-bit table (256 entries x 16 bytes = 4096 bytes on stack)
+#   s6  H^2 8-bit table (4096 bytes on stack, at s3 + 4096)
 #
 #   t0-t9  AES/GHASH temporaries and loop control
 #
@@ -133,35 +130,148 @@ sub emit_rept {
     return $out;
 }
 
-sub emit_528_prep {
-    my ($tab, $shr, $shl, $loop_label, $comment) = @_;
+sub emit_build_8bit_table {
+    my ($tab_reg, $label_prefix) = @_;
+    # Build 256-entry 8-bit GHASH table from raw H value.
+    # Input:  r12 (hi), r13 (lo) = H value in native byte order.
+    #         $tab_reg = register pointing to 4096-byte destination area.
+    # Output: T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]
+    #         where T4 is the standard 4-bit GHASH table.
+    # Clobbers: r12-r21, t7 ($r19 is t7 alias on some, using r19 explicitly)
+    #
+    # Strategy:
+    #   Phase 1: Build T4[0..15] at tab_reg+0..255 (standard 4-bit table).
+    #   Phase 2: For byte=255..16, compute T8[byte] and store at byte*16.
+    #            (reads T4[0..15] which are untouched at this point)
+    #   Phase 3: In-place convert T4[0..15] to T8[0..15] = shift4(T4[i]).
+    #            (T4[i>>4]=T4[0]={0,0} for i<16, so T8[i] = shift4(T4[i]) ^ 0)
+
     my $out = "";
-    $out .= "    # $comment\n" if $comment;
-    $out .= <<"___";
-    ori     \$r14,$tab,0
-    ori     \$r15,$shr,0
-    ori     \$r16,$shl,0
-    li.d    \$r20,16
-$loop_label:
-    ld.d    \$r17,\$r14,0
-    ld.d    \$r18,\$r14,8
-    andi    \$r19,\$r18,0x0f
-    slli.d  \$r19,\$r19,4
-    st.b    \$r19,\$r16,0
-    slli.d  \$r21,\$r17,60
-    srli.d  \$r18,\$r18,4
-    or      \$r18,\$r18,\$r21
-    srli.d  \$r17,\$r17,4
-    st.d    \$r17,\$r15,0
-    st.d    \$r18,\$r15,8
-    addi.d  \$r14,\$r14,16
-    addi.d  \$r15,\$r15,16
-    addi.d  \$r16,\$r16,1
-    addi.d  \$r20,\$r20,-1
-    bnez    \$r20,$loop_label
-___
+    $out .= "    # ── Phase 1: Build 4-bit table T4[0..15] at $tab_reg ──\n";
+    $out .= "    st.d    \$r0,$tab_reg,0\n";
+    $out .= "    st.d    \$r0,$tab_reg,8\n";
+    # T4[8] = H (index 8 → offset 128)
+    $out .= "    st.d    \$r12,$tab_reg,128\n";
+    $out .= "    st.d    \$r13,$tab_reg,136\n";
+    $out .= "    li.d    \$r21,0xe100000000000000\n";
+    # T4[4] = rb(H)
+    $out .= "    REDUCE1BIT \$r12,\$r13,\$r14,\$r15,\$r21\n";
+    $out .= "    st.d    \$r12,$tab_reg,64\n";
+    $out .= "    st.d    \$r13,$tab_reg,72\n";
+    # T4[2] = rb^2(H)
+    $out .= "    REDUCE1BIT \$r12,\$r13,\$r14,\$r15,\$r21\n";
+    $out .= "    st.d    \$r12,$tab_reg,32\n";
+    $out .= "    st.d    \$r13,$tab_reg,40\n";
+    # T4[1] = rb^3(H) (r12/r13 still hold this for composites below)
+    $out .= "    REDUCE1BIT \$r12,\$r13,\$r14,\$r15,\$r21\n";
+    $out .= "    st.d    \$r12,$tab_reg,16\n";
+    $out .= "    st.d    \$r13,$tab_reg,24\n";
+    # T4[3] = T4[1] ^ T4[2]
+    $out .= "    ld.d    \$r14,$tab_reg,32\n";
+    $out .= "    ld.d    \$r15,$tab_reg,40\n";
+    $out .= "    xor     \$r14,\$r12,\$r14\n";
+    $out .= "    xor     \$r15,\$r13,\$r15\n";
+    $out .= "    st.d    \$r14,$tab_reg,48\n";
+    $out .= "    st.d    \$r15,$tab_reg,56\n";
+    # T4[5..7] = T4[4] ^ T4[1..3]
+    $out .= "    ld.d    \$r16,$tab_reg,64\n";
+    $out .= "    ld.d    \$r17,$tab_reg,72\n";
+    $out .= "    xor     \$r14,\$r16,\$r12\n";   # T4[5]=T4[4]^T4[1]
+    $out .= "    xor     \$r15,\$r17,\$r13\n";
+    $out .= "    st.d    \$r14,$tab_reg,80\n";
+    $out .= "    st.d    \$r15,$tab_reg,88\n";
+    $out .= "    ld.d    \$r14,$tab_reg,32\n";
+    $out .= "    ld.d    \$r15,$tab_reg,40\n";
+    $out .= "    xor     \$r14,\$r16,\$r14\n";   # T4[6]=T4[4]^T4[2]
+    $out .= "    xor     \$r15,\$r17,\$r15\n";
+    $out .= "    st.d    \$r14,$tab_reg,96\n";
+    $out .= "    st.d    \$r15,$tab_reg,104\n";
+    $out .= "    ld.d    \$r14,$tab_reg,48\n";
+    $out .= "    ld.d    \$r15,$tab_reg,56\n";
+    $out .= "    xor     \$r14,\$r16,\$r14\n";   # T4[7]=T4[4]^T4[3]
+    $out .= "    xor     \$r15,\$r17,\$r15\n";
+    $out .= "    st.d    \$r14,$tab_reg,112\n";
+    $out .= "    st.d    \$r15,$tab_reg,120\n";
+    # T4[9..15] = T4[8] ^ T4[1..7]
+    $out .= "    ld.d    \$r16,$tab_reg,128\n";  # T4[8]
+    $out .= "    ld.d    \$r17,$tab_reg,136\n";
+    for my $j (1 .. 7) {
+        my $src_off = $j * 16;
+        my $dst_off = (8 + $j) * 16;
+        $out .= "    ld.d    \$r14,$tab_reg,$src_off\n";
+        $out .= "    ld.d    \$r15,$tab_reg," . ($src_off+8) . "\n";
+        $out .= "    xor     \$r14,\$r16,\$r14\n";
+        $out .= "    xor     \$r15,\$r17,\$r15\n";
+        $out .= "    st.d    \$r14,$tab_reg,$dst_off\n";
+        $out .= "    st.d    \$r15,$tab_reg," . ($dst_off+8) . "\n";
+    }
+
+    $out .= "\n    # ── Phase 2: Build T8[16..255] from T4[0..15] ──\n";
+    $out .= "    # T8[byte] = shift4(T4[byte & 0xf]) ^ T4[byte >> 4]\n";
+    $out .= "    # shift4(Z) = {(Z.hi >> 4) ^ rem_4bit[Z.lo & 0xf], (Z.hi << 60) | (Z.lo >> 4)}\n";
+    $out .= "    la.local \$r21,.Lrem_4bit\n";
+    $out .= "    ori     \$r20,\$r0,255\n";      # byte counter
+    $out .= "${label_prefix}_loop:\n";
+    # nlo = byte & 0xf, nhi = byte >> 4
+    $out .= "    andi    \$r16,\$r20,0x0f\n";    # nlo
+    $out .= "    srli.d  \$r17,\$r20,4\n";        # nhi
+    # Load T4[nlo]
+    $out .= "    slli.d  \$r16,\$r16,4\n";        # nlo * 16
+    $out .= "    add.d   \$r16,$tab_reg,\$r16\n";
+    $out .= "    ld.d    \$r12,\$r16,0\n";        # T4[nlo].hi
+    $out .= "    ld.d    \$r13,\$r16,8\n";        # T4[nlo].lo
+    # shift4(T4[nlo])
+    $out .= "    andi    \$r18,\$r13,0x0f\n";     # rem index
+    $out .= "    slli.d  \$r18,\$r18,3\n";         # *8 for rem_4bit table
+    $out .= "    add.d   \$r18,\$r21,\$r18\n";
+    $out .= "    ld.d    \$r18,\$r18,0\n";         # rem_4bit[Z.lo & 0xf]
+    $out .= "    slli.d  \$r19,\$r12,60\n";        # Z.hi << 60
+    $out .= "    srli.d  \$r13,\$r13,4\n";         # Z.lo >> 4
+    $out .= "    or      \$r13,\$r13,\$r19\n";     # new lo
+    $out .= "    srli.d  \$r12,\$r12,4\n";         # Z.hi >> 4
+    $out .= "    xor     \$r12,\$r12,\$r18\n";     # ^ rem_4bit[rem]
+    # XOR T4[nhi]
+    $out .= "    slli.d  \$r17,\$r17,4\n";         # nhi * 16
+    $out .= "    add.d   \$r17,$tab_reg,\$r17\n";
+    $out .= "    ld.d    \$r14,\$r17,0\n";
+    $out .= "    ld.d    \$r15,\$r17,8\n";
+    $out .= "    xor     \$r12,\$r12,\$r14\n";
+    $out .= "    xor     \$r13,\$r13,\$r15\n";
+    # Store T8[byte]
+    $out .= "    slli.d  \$r16,\$r20,4\n";         # byte * 16
+    $out .= "    add.d   \$r16,$tab_reg,\$r16\n";
+    $out .= "    st.d    \$r12,\$r16,0\n";
+    $out .= "    st.d    \$r13,\$r16,8\n";
+    $out .= "    addi.d  \$r20,\$r20,-1\n";
+    $out .= "    slti    \$r16,\$r20,16\n";
+    $out .= "    beqz    \$r16,${label_prefix}_loop\n";
+
+    $out .= "\n    # ── Phase 3: In-place convert T4[0..15] to T8[0..15] ──\n";
+    $out .= "    # T8[i] = shift4(T4[i]) for i=0..15 (since T4[i>>4]=T4[0]={0,0})\n";
+    $out .= "    ori     \$r20,\$r0,0\n";          # i = 0
+    $out .= "${label_prefix}_fixup:\n";
+    $out .= "    slli.d  \$r16,\$r20,4\n";
+    $out .= "    add.d   \$r16,$tab_reg,\$r16\n";
+    $out .= "    ld.d    \$r12,\$r16,0\n";
+    $out .= "    ld.d    \$r13,\$r16,8\n";
+    $out .= "    andi    \$r18,\$r13,0x0f\n";
+    $out .= "    slli.d  \$r18,\$r18,3\n";
+    $out .= "    add.d   \$r18,\$r21,\$r18\n";
+    $out .= "    ld.d    \$r18,\$r18,0\n";
+    $out .= "    slli.d  \$r19,\$r12,60\n";
+    $out .= "    srli.d  \$r13,\$r13,4\n";
+    $out .= "    or      \$r13,\$r13,\$r19\n";
+    $out .= "    srli.d  \$r12,\$r12,4\n";
+    $out .= "    xor     \$r12,\$r12,\$r18\n";
+    $out .= "    st.d    \$r12,\$r16,0\n";
+    $out .= "    st.d    \$r13,\$r16,8\n";
+    $out .= "    addi.d  \$r20,\$r20,1\n";
+    $out .= "    slti    \$r16,\$r20,16\n";
+    $out .= "    bnez    \$r16,${label_prefix}_fixup\n";
+
     return $out;
 }
+
 
 sub emit_vpaes_lsx2_top_a {
     return <<'___';
@@ -282,7 +392,7 @@ sub emit_half_back {
     my $out = "";
     # mid_b: load MC tables from stack base, sb2 lookups
     $out .= <<"___";
-    ld.d      \$r16,\$sp,832
+    ld.d      \$r16,\$sp,128
     vld       \$vr1,\$r16,$fw_off
     vori.b    \$vr5,\$vr15,0
     vld       \$vr4,\$r16,$bw_off
@@ -330,7 +440,7 @@ sub emit_final_gcm {
     vxor.v    \$vr23,\$vr23,\$vr5
     vshuf.b   \$vr0,\$vr18,\$vr30,\$vr3
     vshuf.b   \$vr19,\$vr18,\$vr30,\$vr22
-    ld.d      \$r16,\$sp,832
+    ld.d      \$r16,\$sp,128
     vld       \$vr1,\$r16,$sr_off
     vxor.v    \$vr0,\$vr0,\$vr4
     vxor.v    \$vr19,\$vr19,\$vr23
@@ -343,7 +453,7 @@ ___
 
 sub emit_lsx2_counter_pair {
     return <<'___';
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -356,8 +466,8 @@ ___
 
 sub emit_xor_store_from_stack {
     return <<'___';
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     vxor.v      $vr6,$vr6,$vr0
@@ -366,8 +476,8 @@ sub emit_xor_store_from_stack {
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
 ___
 }
 
@@ -388,11 +498,11 @@ ___
 
 sub emit_advance_counter_pair {
     return <<'___';
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r17,$r16
-    vinsgr2vr.w $vr8,$r17,3
+    xvinsgr2vr.w $xr8,$r17,3
 ___
 }
 
@@ -400,7 +510,7 @@ ___
 # Saves 1 ld.w vs separate counter_pair + advance_counter_pair.
 sub emit_lsx2_counter_pair_and_advance {
     return <<'___';
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
     vori.b      $vr0,$vr8,0
     vinsgr2vr.w $vr0,$r17,3
@@ -409,9 +519,9 @@ sub emit_lsx2_counter_pair_and_advance {
     vori.b      $vr19,$vr8,0
     vinsgr2vr.w $vr19,$r17,3
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
+    xvinsgr2vr.w $xr8,$r16,3
 ___
 }
 
@@ -430,8 +540,8 @@ ___
 # Extract GHASH input first, then XOR with keystream, then store plaintext.
 sub emit_xor_store_and_seed_decrypt {
     return <<'___';
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     vld         $vr6,$r16,0
     vld         $vr7,$r16,16
     # Seed GHASH from ciphertext (input, before XOR)
@@ -453,8 +563,8 @@ sub emit_xor_store_and_seed_decrypt {
     vst         $vr7,$r17,16
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
 ___
 }
 
@@ -468,11 +578,13 @@ ___
 # ── GHASH step emitter ──────────────────────────────────────────────
 
 sub emit_ghash_step {
-    my ($step) = @_;           # 1..15
+    my ($step) = @_;           # 1..14
     if ($step <= 7) {
-        return "    GHASH528_PRE2\n    GHASH528_POST2_LO\n";
+        return "    GHASH8B_STEP2_LO\n";
+    } elsif ($step <= 14) {
+        return "    GHASH8B_STEP2_HI\n";
     } else {
-        return "    GHASH528_PRE2\n    GHASH528_POST2_HI\n";
+        return "    GHASH8B_FINAL2\n";
     }
 }
 
@@ -480,7 +592,7 @@ sub emit_ghash_step {
 #
 # Nr-1 middle AES rounds (half_front + GHASH slot + half_back) plus
 # 1 final AES round (top + sbo + ShiftRows).
-# 15 GHASH byte-steps (7 LO + 8 HI) are evenly distributed across
+# 15 GHASH byte-steps (7 LO + 7 HI + 1 FINAL) are evenly distributed across
 # the 2*(Nr-1) available half-round slots.
 
 sub emit_warmup_state {
@@ -521,8 +633,8 @@ sub emit_steady_state {
     # Slot_B for last round is not available (final round follows).
     my $total_slots = 2 * $num_rounds - 1;  # slot_B of last round excluded
     my %ghash_at;
-    for my $g (0 .. 14) {
-        my $slot = int($g * $total_slots / 15 + 0.5);
+    for my $g (0 .. 13) {
+        my $slot = int($g * $total_slots / 14 + 0.5);
         $slot = $total_slots - 1 if $slot >= $total_slots;
         $ghash_at{$slot} = $g + 1;  # GHASH step 1..15
     }
@@ -697,47 +809,43 @@ ___
 
 sub emit_lasx_counter_pair {
     return <<'___';
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
-    vori.b      $vr0,$vr8,0
-    vinsgr2vr.w $vr0,$r17,3
+    xvori.b     $xr0,$xr8,0
+    xvinsgr2vr.w $xr0,$r17,3
     addi.w      $r17,$r16,1
     revb.2w     $r17,$r17
-    vori.b      $vr7,$vr8,0
-    vinsgr2vr.w $vr7,$r17,3
-    xvpermi.q   $xr0,$xr7,0x02
+    xvinsgr2vr.w $xr0,$r17,7
 ___
 }
 
 sub emit_lasx_counter_pair_and_advance {
     return <<'___';
-    ld.w        $r16,$sp,848
+    ld.w        $r16,$sp,144
     revb.2w     $r17,$r16
-    vori.b      $vr0,$vr8,0
-    vinsgr2vr.w $vr0,$r17,3
+    xvori.b     $xr0,$xr8,0
+    xvinsgr2vr.w $xr0,$r17,3
     addi.w      $r17,$r16,1
     revb.2w     $r17,$r17
-    vori.b      $vr7,$vr8,0
-    vinsgr2vr.w $vr7,$r17,3
-    xvpermi.q   $xr0,$xr7,0x02
+    xvinsgr2vr.w $xr0,$r17,7
     addi.w      $r16,$r16,2
-    st.w        $r16,$sp,848
+    st.w        $r16,$sp,144
     revb.2w     $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
+    xvinsgr2vr.w $xr8,$r16,3
 ___
 }
 
 sub emit_xor_store_from_stack_lasx {
     return <<'___';
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     xvxor.v     $xr6,$xr6,$xr0
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
 ___
 }
 
@@ -759,8 +867,8 @@ ___
 
 sub emit_xor_store_and_seed_decrypt_lasx {
     return <<'___';
-    ld.d        $r16,$sp,816
-    ld.d        $r17,$sp,824
+    ld.d        $r16,$sp,112
+    ld.d        $r17,$sp,120
     xvld        $xr6,$r16,0
     # Seed GHASH from ciphertext (before XOR)
     vpickve2gr.d $r18,$vr6,0
@@ -779,8 +887,8 @@ sub emit_xor_store_and_seed_decrypt_lasx {
     xvst        $xr6,$r17,0
     addi.d      $r16,$r16,32
     addi.d      $r17,$r17,32
-    st.d        $r16,$sp,816
-    st.d        $r17,$sp,824
+    st.d        $r16,$sp,112
+    st.d        $r17,$sp,120
 ___
 }
 
@@ -816,8 +924,8 @@ sub emit_steady_state_lasx {
 
     my $total_slots = 2 * $num_rounds - 1;
     my %ghash_at;
-    for my $g (0 .. 14) {
-        my $slot = int($g * $total_slots / 15 + 0.5);
+    for my $g (0 .. 13) {
+        my $slot = int($g * $total_slots / 14 + 0.5);
         $slot = $total_slots - 1 if $slot >= $total_slots;
         $ghash_at{$slot} = $g + 1;
     }
@@ -869,83 +977,74 @@ my $code = <<'___';
     xor     \HI,\HI,\TMP0
 .endm
 
-.macro GHASH528_INIT TAB SRCLO CUR ZHI ZLO TBYTE TPTR
-    andi    \TPTR,  \SRCLO, 0x0f
-    bstrpick.d \CUR, \SRCLO, 7, 4
-    alsl.d  \TPTR,  \TPTR, \TAB, 4
-    ld.d    \ZHI,   \TPTR, 0
-    ld.d    \ZLO,   \TPTR, 8
+# ── 8-bit table GHASH macros ─────────────────────────────────────────
+# Each H value has a 256-entry table (4096 bytes = 256 x 16).
+# T[i] = i * H in GF(2^128), reflected GCM convention.
+# Index 128 = H (x^0), basis via REDUCE1BIT: T[64]=x*H, ..., T[1]=x^7*H.
+#
+# GHASH8B_INIT:   5 instructions - extract byte 0, look up Z=T[byte], advance
+# GHASH8B_STEP:  14 instructions - shift Z>>8, reduce, XOR T[next_byte], advance
+# GHASH8B_FINAL: 13 instructions - same as STEP without final advance
+
+.macro GHASH8B_INIT TAB SRCLO ZHI ZLO T0
+    andi    \T0,    \SRCLO, 0xff
+    alsl.d  \T0,    \T0, \TAB, 4
+    ld.d    \ZHI,   \T0, 0
+    ld.d    \ZLO,   \T0, 8
     srli.d  \SRCLO, \SRCLO, 8
 .endm
 
-.macro GHASH528_PRE SHL SHR CUR ZHI ZLO TRED THI TLO
-    ldx.bu  \TLO,  \SHL, \CUR
-    andi    \TRED, \ZLO, 0xff
-    xor     \TRED, \TRED, \TLO
-    alsl.d  \TRED, \TRED, $s2, 3
-    ld.d    \TRED, \TRED, 0
-    alsl.d  \THI,  \CUR,  \SHR, 4
-    ld.d    \TLO,  \THI,  8
-    ld.d    \THI,  \THI,  0
-.endm
-
-.macro GHASH528_POST TAB SRC CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    srli.d  \ZLO,    \ZLO, 8
+.macro GHASH8B_STEP TAB SRC ZHI ZLO T0 T1
+    andi    \T0,    \ZLO, 0xff
+    srli.d  \ZLO,   \ZLO, 8
     bstrins.d \ZLO, \ZHI, 63, 56
-    srli.d  \ZHI,    \ZHI, 8
-    xor     \ZHI,    \ZHI, \TRED
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
-
-    andi    \TPTR,   \SRC, 0x0f
-    bstrpick.d \CUR, \SRC, 7, 4
-    alsl.d  \TPTR,   \TPTR, \TAB, 4
-    ld.d    \THI,    \TPTR, 0
-    ld.d    \TLO,    \TPTR, 8
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
-    srli.d  \SRC,    \SRC, 8
+    srli.d  \ZHI,   \ZHI, 8
+    alsl.d  \T0,    \T0, $s2, 3
+    ld.d    \T0,    \T0, 0
+    xor     \ZHI,   \ZHI, \T0
+    andi    \T1,    \SRC, 0xff
+    alsl.d  \T1,    \T1, \TAB, 4
+    ld.d    \T0,    \T1, 0
+    ld.d    \T1,    \T1, 8
+    xor     \ZHI,   \ZHI, \T0
+    xor     \ZLO,   \ZLO, \T1
+    srli.d  \SRC,   \SRC, 8
 .endm
 
-.macro GHASH528_FINAL TAB CUR ZHI ZLO TRED THI TLO TSHIFT TPTR
-    andi    \TRED,   \ZLO, 0x0f
-    slli.d  \TRED,   \TRED, 4
-    alsl.d  \TRED,   \TRED, $s2, 3
-    ld.d    \TRED,   \TRED, 0
-    srli.d  \ZLO,    \ZLO, 4
-    bstrins.d \ZLO, \ZHI, 63, 60
-    srli.d  \ZHI,    \ZHI, 4
-    alsl.d  \TPTR,   \CUR, \TAB, 4
-    ld.d    \THI,    \TPTR, 0
-    ld.d    \TLO,    \TPTR, 8
-    xor     \ZHI,    \ZHI, \TRED
-    xor     \ZHI,    \ZHI, \THI
-    xor     \ZLO,    \ZLO, \TLO
+.macro GHASH8B_FINAL TAB SRC ZHI ZLO T0 T1
+    andi    \T0,    \ZLO, 0xff
+    srli.d  \ZLO,   \ZLO, 8
+    bstrins.d \ZLO, \ZHI, 63, 56
+    srli.d  \ZHI,   \ZHI, 8
+    alsl.d  \T0,    \T0, $s2, 3
+    ld.d    \T0,    \T0, 0
+    xor     \ZHI,   \ZHI, \T0
+    andi    \T1,    \SRC, 0xff
+    alsl.d  \T1,    \T1, \TAB, 4
+    ld.d    \T0,    \T1, 0
+    ld.d    \T1,    \T1, 8
+    xor     \ZHI,   \ZHI, \T0
+    xor     \ZLO,   \ZLO, \T1
 .endm
 
-.macro GHASH528_INIT2
-    GHASH528_INIT $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17
-    GHASH528_INIT $s3, $r12, $r15, $r13, $r14, $r19, $r20
+.macro GHASH8B_INIT2
+    GHASH8B_INIT $s6, $r7,  $r8,  $r9,  $r16
+    GHASH8B_INIT $s3, $r12, $r13, $r14, $r19
 .endm
 
-.macro GHASH528_PRE2
-    GHASH528_PRE  $s7, $s8, $r10, $r8,  $r9,  $r16, $r17, $r18
-    GHASH528_PRE  $s4, $s5, $r15, $r13, $r14, $r19, $r20, $r21
+.macro GHASH8B_STEP2_LO
+    GHASH8B_STEP $s6, $r7,  $r8,  $r9,  $r16, $r17
+    GHASH8B_STEP $s3, $r12, $r13, $r14, $r19, $r20
 .endm
 
-.macro GHASH528_POST2_LO
-    GHASH528_POST $s6, $r7,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_POST $s3, $r12, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.macro GHASH8B_STEP2_HI
+    GHASH8B_STEP $s6, $r6,  $r8,  $r9,  $r16, $r17
+    GHASH8B_STEP $s3, $r11, $r13, $r14, $r19, $r20
 .endm
 
-.macro GHASH528_POST2_HI
-    GHASH528_POST $s6, $r6,  $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_POST $s3, $r11, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
-.endm
-
-.macro GHASH528_FINAL2
-    GHASH528_FINAL $s6, $r10, $r8,  $r9,  $r16, $r17, $r18, $r4, $r5
-    GHASH528_FINAL $s3, $r15, $r13, $r14, $r19, $r20, $r21, $r4, $r5
+.macro GHASH8B_FINAL2
+    GHASH8B_FINAL $s6, $r6,  $r8,  $r9,  $r16, $r17
+    GHASH8B_FINAL $s3, $r11, $r13, $r14, $r19, $r20
 .endm
 
 .section .rodata
@@ -1046,7 +1145,7 @@ Lk_sr:
     .hword 0xBBF0, 0xBA32, 0xB874, 0xB9B6, 0xBCF8, 0xBD3A, 0xBF7C, 0xBEBE
 
 # Pre-shifted reduction table: each entry = rem_8bit[i] << 48, stored as .dword
-# Eliminates slli.d 48 after each lookup in GHASH528_PRE/FINAL
+# Eliminates slli.d 48 after each lookup in GHASH8B_STEP/FINAL
 .align 4
 .Lrem_8bit_shl48:
     .dword 0x0000000000000000, 0x01C2000000000000, 0x0384000000000000, 0x0246000000000000
@@ -1195,18 +1294,20 @@ loongarch64_vpaes_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_enc_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0           # Xi*
     ori     $s1,$a3,0           # AES key schedule
@@ -1216,26 +1317,19 @@ loongarch64_vpaes_gcm_encrypt:
     beqz    $s0,.Lgcm_enc_done
 
     # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
 
-    st.d    $s0,$sp,856         # save aligned_len for return
+    st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base
-    ori     $s4,$sp,0           # H shl4 bytes
-    addi.d  $s5,$sp,16          # H shr4 table
-    addi.d  $s6,$sp,272         # H^2 4-bit table
-    addi.d  $s7,$sp,528         # H^2 shl4 bytes
-    addi.d  $s8,$sp,544         # H^2 shr4 table
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
 ___
-$code .= emit_528_prep('$s3', '$s5', '$s4', '.Lprep_h_528',
-    'Build H 528B helpers.');
 $code .= <<'___';
 
-    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # Compute raw H^2 using the 4-bit multiply sequence.
     # H.u[0..1] at $fp+16 are already BSWAP'd by CRYPTO_gcm128_init.
     # Feed them directly (without revb) so the byte-by-byte multiply
     # processes byte[15]→byte[0], matching gcm_ghash_4bit's order.
@@ -1344,113 +1438,35 @@ $code .= <<'___';
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    # Expand raw H^2 into the 16-entry 4-bit table layout.
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+___
+$code .= emit_build_8bit_table('$s3', '.Lenc_h_8bit');
+$code .= <<'___';
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$s6,128
-    st.d    $r13,$s6,136
-    li.d    $r21,0xe100000000000000
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,64
-    st.d    $r13,$s6,72
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,32
-    st.d    $r13,$s6,40
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,16
-    st.d    $r13,$s6,24
-
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r14,$r12,$r14
-    xor     $r15,$r13,$r15
-    st.d    $r14,$s6,48
-    st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
-    ld.d    $r14,$s6,64
-    ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
-    ld.d    $r14,$s6,80
-    ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
-    ld.d    $r14,$s6,96
-    ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
-    ld.d    $r14,$s6,112
-    ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
-
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
 ___
-$code .= emit_528_prep('$s6', '$s8', '$s7', '.Lprep_h2_528',
-    'Build H^2 528B helpers.');
+$code .= emit_build_8bit_table('$s6', '.Lenc_h2_8bit');
 $code .= <<'___';
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # Preheat VPAES constants.
     ori     $a2,$s1,0
@@ -1458,7 +1474,7 @@ $code .= <<'___';
 
     # Save MC table base for unrolled steady state.
     la.local $r16,Lk_mc_backward
-    st.d    $r16,$sp,832
+    st.d    $r16,$sp,128
 
     # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
     la.local $r16,Lk_ipt
@@ -1508,7 +1524,7 @@ ___
 $code .= emit_xor_store_from_stack();
 $code .= emit_seed_ghash_from_cipher_pair();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
 ___
 $code .= emit_advance_counter_pair();
 $code .= <<'___';
@@ -1532,13 +1548,13 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(9);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack();
 $code .= emit_seed_ghash_from_cipher_pair();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_128
     b           .Lgcm_drain
@@ -1550,13 +1566,13 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(11);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack();
 $code .= emit_seed_ghash_from_cipher_pair();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_192
     b           .Lgcm_drain
@@ -1568,13 +1584,13 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(13);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack();
 $code .= emit_seed_ghash_from_cipher_pair();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_loop_256
     b           .Lgcm_drain
@@ -1582,41 +1598,41 @@ $code .= <<'___';
     # ─── drain: finish last GHASH (non-interleaved) ─────────────────
 .Lgcm_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_writeback_xi();
 $code .= <<'___';
     # Write counter back to ivec.
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    xvinsgr2vr.w $xr8,$r16,3
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_enc_done:
-    ld.d    $a0,$sp,856         # return aligned_len
+    ld.d    $a0,$sp,152         # return aligned_len
 
 .Lgcm_epilogue:
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_enc_ret0:
@@ -1641,18 +1657,20 @@ loongarch64_vpaes_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_dec_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0           # Xi*
     ori     $s1,$a3,0           # AES key schedule
@@ -1662,26 +1680,19 @@ loongarch64_vpaes_gcm_decrypt:
     beqz    $s0,.Lgcm_dec_done
 
     # Save inp / out / ivec to stack (GPRs will be reused for GHASH)
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
 
-    st.d    $s0,$sp,856         # save aligned_len for return
+    st.d    $s0,$sp,152         # save aligned_len for return
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32          # Htable base
-    ori     $s4,$sp,0           # H shl4 bytes
-    addi.d  $s5,$sp,16          # H shr4 table
-    addi.d  $s6,$sp,272         # H^2 4-bit table
-    addi.d  $s7,$sp,528         # H^2 shl4 bytes
-    addi.d  $s8,$sp,544         # H^2 shr4 table
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
 ___
-$code .= emit_528_prep('$s3', '$s5', '$s4', '.Ldec_prep_h_528',
-    'Build H 528B helpers (decrypt).');
 $code .= <<'___';
 
-    # Compute raw H^2 into sp+800 using the local 4-bit multiply sequence.
+    # Compute raw H^2 using the 4-bit multiply sequence.
     la.local $t7,.Lrem_4bit
     ld.d    $r6,$fp,16
     ld.d    $r7,$fp,24
@@ -1787,113 +1798,35 @@ $code .= <<'___';
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    # Expand raw H^2 into the 16-entry 4-bit table layout.
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+___
+$code .= emit_build_8bit_table('$s3', '.Lgen_h_8bit');
+$code .= <<'___';
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$s6,128
-    st.d    $r13,$s6,136
-    li.d    $r21,0xe100000000000000
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,64
-    st.d    $r13,$s6,72
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,32
-    st.d    $r13,$s6,40
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,16
-    st.d    $r13,$s6,24
-
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r14,$r12,$r14
-    xor     $r15,$r13,$r15
-    st.d    $r14,$s6,48
-    st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
-    ld.d    $r14,$s6,64
-    ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
-    ld.d    $r14,$s6,80
-    ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
-    ld.d    $r14,$s6,96
-    ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
-    ld.d    $r14,$s6,112
-    ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
-
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
 ___
-$code .= emit_528_prep('$s6', '$s8', '$s7', '.Ldec_prep_h2_528',
-    'Build H^2 528B helpers (decrypt).');
+$code .= emit_build_8bit_table('$s6', '.Lgen_h2_8bit');
 $code .= <<'___';
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # Preheat VPAES constants.
     ori     $a2,$s1,0
@@ -1901,7 +1834,7 @@ $code .= <<'___';
 
     # Save MC table base for unrolled steady state.
     la.local $r16,Lk_mc_backward
-    st.d    $r16,$sp,832
+    st.d    $r16,$sp,128
 
     # Preload Lk_ipt and Lk_sbo into persistent VPRs (survive across loop).
     la.local $r16,Lk_ipt
@@ -1950,7 +1883,7 @@ $code .= <<'___';
 ___
 $code .= emit_xor_store_and_seed_decrypt();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
 ___
 $code .= emit_advance_counter_pair();
 $code .= <<'___';
@@ -1974,12 +1907,12 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(9);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_128
     b           .Lgcm_dec_drain
@@ -1991,12 +1924,12 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(11);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_192
     b           .Lgcm_dec_drain
@@ -2008,12 +1941,12 @@ $code .= emit_lsx2_counter_pair_and_advance();
 $code .= emit_init_gcm();
 $code .= emit_steady_state(13);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_dec_loop_256
     b           .Lgcm_dec_drain
@@ -2021,41 +1954,41 @@ $code .= <<'___';
     # ─── drain: finish last GHASH (non-interleaved) ─────────────────
 .Lgcm_dec_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_writeback_xi();
 $code .= <<'___';
     # Write counter back to ivec.
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    xvinsgr2vr.w $xr8,$r16,3
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_dec_done:
-    ld.d    $a0,$sp,856         # return aligned_len
+    ld.d    $a0,$sp,152         # return aligned_len
 
 .Lgcm_dec_epilogue:
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_dec_ret0:
@@ -2078,18 +2011,20 @@ loongarch64_vpaes_lasx_gcm_encrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_enc_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0
     ori     $s1,$a3,0
@@ -2097,22 +2032,15 @@ loongarch64_vpaes_lasx_gcm_encrypt:
     bstrins.d $s0,$zero,4,0
     beqz    $s0,.Lgcm_lasx_enc_done
 
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
-    st.d    $s0,$sp,856
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
+    st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32
-    ori     $s4,$sp,0
-    addi.d  $s5,$sp,16
-    addi.d  $s6,$sp,272
-    addi.d  $s7,$sp,528
-    addi.d  $s8,$sp,544
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
 ___
-$code .= emit_528_prep('$s3', '$s5', '$s4', '.Llasx_enc_prep_h_528',
-    'Build H 528B helpers (LASX enc).');
 $code .= <<'___';
 
     la.local $t7,.Lrem_4bit
@@ -2220,112 +2148,39 @@ $code .= <<'___';
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+___
+$code .= emit_build_8bit_table('$s3', '.Llasx_enc_h_8bit');
+$code .= <<'___';
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$s6,128
-    st.d    $r13,$s6,136
-    li.d    $r21,0xe100000000000000
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,64
-    st.d    $r13,$s6,72
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,32
-    st.d    $r13,$s6,40
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,16
-    st.d    $r13,$s6,24
-
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r14,$r12,$r14
-    xor     $r15,$r13,$r15
-    st.d    $r14,$s6,48
-    st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
-    ld.d    $r14,$s6,64
-    ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
-    ld.d    $r14,$s6,80
-    ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
-    ld.d    $r14,$s6,96
-    ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
-    ld.d    $r14,$s6,112
-    ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+___
+$code .= emit_build_8bit_table('$s6', '.Llasx_enc_h2_8bit');
+$code .= <<'___';
 
 ___
-$code .= emit_528_prep('$s6', '$s8', '$s7', '.Llasx_enc_prep_h2_528',
-    'Build H^2 528B helpers (LASX enc).');
 $code .= <<'___';
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
+    xvpermi.q $xr8,$xr8,0x00
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # LASX preheat (constants + Lk_ipt/Lk_sbo + MC tables).
     bl      _vpaes_lasx_preheat_gcm
@@ -2371,7 +2226,7 @@ ___
 $code .= emit_xor_store_from_stack_lasx();
 $code .= emit_seed_ghash_from_cipher_pair_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
 ___
 $code .= emit_advance_counter_pair();
 $code .= <<'___';
@@ -2393,13 +2248,13 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(9);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack_lasx();
 $code .= emit_seed_ghash_from_cipher_pair_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_128
     b           .Lgcm_lasx_enc_drain
@@ -2410,13 +2265,13 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(11);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack_lasx();
 $code .= emit_seed_ghash_from_cipher_pair_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_192
     b           .Lgcm_lasx_enc_drain
@@ -2427,52 +2282,52 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(13);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_from_stack_lasx();
 $code .= emit_seed_ghash_from_cipher_pair_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_enc_loop_256
     b           .Lgcm_lasx_enc_drain
 
 .Lgcm_lasx_enc_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_writeback_xi();
 $code .= <<'___';
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    xvinsgr2vr.w $xr8,$r16,3
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_lasx_enc_done:
-    ld.d    $a0,$sp,856
+    ld.d    $a0,$sp,152
 
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_enc_ret0:
@@ -2495,18 +2350,20 @@ loongarch64_vpaes_lasx_gcm_decrypt:
 .cfi_startproc
     beqz    $a2,.Lgcm_lasx_dec_ret0
 
-    addi.d  $sp,$sp,-960
-    st.d    $ra,$sp,952
-    st.d    $fp,$sp,944
-    st.d    $s0,$sp,936
-    st.d    $s1,$sp,928
-    st.d    $s2,$sp,920
-    st.d    $s3,$sp,912
-    st.d    $s4,$sp,904
-    st.d    $s5,$sp,896
-    st.d    $s6,$sp,888
-    st.d    $s7,$sp,880
-    st.d    $s8,$sp,872
+    lu12i.w $r16,-3
+    ori     $r16,$r16,3904
+    add.d   $sp,$sp,$r16        # sp -= 8384
+    st.d    $ra,$sp,0
+    st.d    $fp,$sp,8
+    st.d    $s0,$sp,16
+    st.d    $s1,$sp,24
+    st.d    $s2,$sp,32
+    st.d    $s3,$sp,40
+    st.d    $s4,$sp,48
+    st.d    $s5,$sp,56
+    st.d    $s6,$sp,64
+    st.d    $s7,$sp,72
+    st.d    $s8,$sp,80
 
     ori     $fp,$a5,0
     ori     $s1,$a3,0
@@ -2514,22 +2371,15 @@ loongarch64_vpaes_lasx_gcm_decrypt:
     bstrins.d $s0,$zero,4,0
     beqz    $s0,.Lgcm_lasx_dec_done
 
-    st.d    $a0,$sp,816
-    st.d    $a1,$sp,824
-    st.d    $a4,$sp,840
-    st.d    $s0,$sp,856
+    st.d    $a0,$sp,112
+    st.d    $a1,$sp,120
+    st.d    $a4,$sp,136
+    st.d    $s0,$sp,152
 
     la.local $s2,.Lrem_8bit_shl48
-    addi.d  $s3,$fp,32
-    ori     $s4,$sp,0
-    addi.d  $s5,$sp,16
-    addi.d  $s6,$sp,272
-    addi.d  $s7,$sp,528
-    addi.d  $s8,$sp,544
+    addi.d  $s3,$fp,32          # Htable base (4-bit, for H^2 computation)
 
 ___
-$code .= emit_528_prep('$s3', '$s5', '$s4', '.Llasx_dec_prep_h_528',
-    'Build H 528B helpers (LASX dec).');
 $code .= <<'___';
 
     la.local $t7,.Lrem_4bit
@@ -2637,112 +2487,39 @@ $code .= <<'___';
 
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$sp,800
-    st.d    $r13,$sp,808
+    st.d    $r12,$sp,96
+    st.d    $r13,$sp,104
 
-    st.d    $r0,$s6,0
-    st.d    $r0,$s6,8
-    ld.d    $r12,$sp,800
-    ld.d    $r13,$sp,808
+    # Build 8-bit GHASH tables (256 entries x 16 bytes = 4096 bytes each).
+    # Read H from the existing 4-bit Htable[8] (= H in native byte order).
+    ld.d    $r12,$s3,128
+    ld.d    $r13,$s3,136
+    addi.d  $s3,$sp,192         # s3 = H 8-bit table base
+___
+$code .= emit_build_8bit_table('$s3', '.Llasx_dec_h_8bit');
+$code .= <<'___';
+
+    # Build H^2 8-bit table from the saved raw native value.
+    ld.d    $r12,$sp,96
+    ld.d    $r13,$sp,104
     revb.d  $r12,$r12
     revb.d  $r13,$r13
-    st.d    $r12,$s6,128
-    st.d    $r13,$s6,136
-    li.d    $r21,0xe100000000000000
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,64
-    st.d    $r13,$s6,72
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,32
-    st.d    $r13,$s6,40
-    REDUCE1BIT $r12,$r13,$r14,$r15,$r21
-    st.d    $r12,$s6,16
-    st.d    $r13,$s6,24
-
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r14,$r12,$r14
-    xor     $r15,$r13,$r15
-    st.d    $r14,$s6,48
-    st.d    $r15,$s6,56
-
-    ld.d    $r12,$s6,64
-    ld.d    $r13,$s6,72
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,80
-    st.d    $r17,$s6,88
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,96
-    st.d    $r17,$s6,104
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,112
-    st.d    $r17,$s6,120
-
-    ld.d    $r12,$s6,128
-    ld.d    $r13,$s6,136
-    ld.d    $r14,$s6,16
-    ld.d    $r15,$s6,24
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,144
-    st.d    $r17,$s6,152
-    ld.d    $r14,$s6,32
-    ld.d    $r15,$s6,40
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,160
-    st.d    $r17,$s6,168
-    ld.d    $r14,$s6,48
-    ld.d    $r15,$s6,56
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,176
-    st.d    $r17,$s6,184
-    ld.d    $r14,$s6,64
-    ld.d    $r15,$s6,72
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,192
-    st.d    $r17,$s6,200
-    ld.d    $r14,$s6,80
-    ld.d    $r15,$s6,88
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,208
-    st.d    $r17,$s6,216
-    ld.d    $r14,$s6,96
-    ld.d    $r15,$s6,104
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,224
-    st.d    $r17,$s6,232
-    ld.d    $r14,$s6,112
-    ld.d    $r15,$s6,120
-    xor     $r16,$r12,$r14
-    xor     $r17,$r13,$r15
-    st.d    $r16,$s6,240
-    st.d    $r17,$s6,248
+    lu12i.w $r16,1
+    add.d   $s6,$s3,$r16        # s6 = H^2 8-bit table = s3 + 4096
+___
+$code .= emit_build_8bit_table('$s6', '.Llasx_dec_h2_8bit');
+$code .= <<'___';
 
 ___
-$code .= emit_528_prep('$s6', '$s8', '$s7', '.Llasx_dec_prep_h2_528',
-    'Build H^2 528B helpers (LASX dec).');
 $code .= <<'___';
 
     # Load counter, save counter to stack.
-    ld.d    $r16,$sp,840
+    ld.d    $r16,$sp,136
     vld     $vr8,$r16,0
+    xvpermi.q $xr8,$xr8,0x00
     ld.w    $r16,$r16,12
     revb.2w $r16,$r16
-    st.w    $r16,$sp,848
+    st.w    $r16,$sp,144
 
     # LASX preheat.
     bl      _vpaes_lasx_preheat_gcm
@@ -2785,7 +2562,7 @@ $code .= <<'___';
 ___
 $code .= emit_xor_store_and_seed_decrypt_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
 ___
 $code .= emit_advance_counter_pair();
 $code .= <<'___';
@@ -2807,12 +2584,12 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(9);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_128
     b           .Lgcm_lasx_dec_drain
@@ -2823,12 +2600,12 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(11);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_192
     b           .Lgcm_lasx_dec_drain
@@ -2839,51 +2616,51 @@ $code .= emit_lasx_counter_pair_and_advance();
 $code .= emit_init_gcm_lasx();
 $code .= emit_steady_state_lasx(13);
 $code .= <<'___';
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_xor_store_and_seed_decrypt_lasx();
 $code .= <<'___';
-    GHASH528_INIT2
+    GHASH8B_INIT2
     addi.d      $s0,$s0,-32
     bnez        $s0,.Lgcm_lasx_dec_loop_256
     b           .Lgcm_lasx_dec_drain
 
 .Lgcm_lasx_dec_drain:
     .rept 7
-    GHASH528_PRE2
-    GHASH528_POST2_LO
+    GHASH8B_STEP2_LO
     .endr
-    .rept 8
-    GHASH528_PRE2
-    GHASH528_POST2_HI
+    .rept 7
+    GHASH8B_STEP2_HI
     .endr
-    GHASH528_FINAL2
+    GHASH8B_FINAL2
 ___
 $code .= emit_ghash_combine_xi();
 $code .= emit_writeback_xi();
 $code .= <<'___';
-    ld.w    $r16,$sp,848
+    ld.w    $r16,$sp,144
     revb.2w $r16,$r16
-    vinsgr2vr.w $vr8,$r16,3
-    ld.d    $r16,$sp,840
+    xvinsgr2vr.w $xr8,$r16,3
+    ld.d    $r16,$sp,136
     vst     $vr8,$r16,0
 
 .Lgcm_lasx_dec_done:
-    ld.d    $a0,$sp,856
+    ld.d    $a0,$sp,152
 
-    ld.d    $ra,$sp,952
-    ld.d    $fp,$sp,944
-    ld.d    $s0,$sp,936
-    ld.d    $s1,$sp,928
-    ld.d    $s2,$sp,920
-    ld.d    $s3,$sp,912
-    ld.d    $s4,$sp,904
-    ld.d    $s5,$sp,896
-    ld.d    $s6,$sp,888
-    ld.d    $s7,$sp,880
-    ld.d    $s8,$sp,872
-    addi.d  $sp,$sp,960
+    ld.d    $ra,$sp,0
+    ld.d    $fp,$sp,8
+    ld.d    $s0,$sp,16
+    ld.d    $s1,$sp,24
+    ld.d    $s2,$sp,32
+    ld.d    $s3,$sp,40
+    ld.d    $s4,$sp,48
+    ld.d    $s5,$sp,56
+    ld.d    $s6,$sp,64
+    ld.d    $s7,$sp,72
+    ld.d    $s8,$sp,80
+    lu12i.w $r16,2
+    ori     $r16,$r16,192
+    add.d   $sp,$sp,$r16        # sp += 8384
     jirl    $zero,$ra,0
 
 .Lgcm_lasx_dec_ret0:
